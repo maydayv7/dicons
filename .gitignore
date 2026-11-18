@@ -1,4 +1,5 @@
-dicons
-compile_commands.json
 .cache/
-
+/build/
+.direnv/
+/result
+/result-*
