@@ -17,16 +17,17 @@
           name = "dicons";
           src = self;
           strictDeps = true;
+          doCheck = true;
           nativeBuildInputs = [
             pkgs.cmake
             pkgs.ninja
             pkgs.pkg-config
-            pkgs.wrapGAppsHook3
+            pkgs.wrapGAppsHook4
           ];
           buildInputs = [
             pkgs.glib
-            pkgs.gtk3
-            pkgs.gtk-layer-shell
+            pkgs.gtk4
+            pkgs.gtk4-layer-shell
           ];
           meta.mainProgram = "dicons";
         };
