@@ -78,9 +78,30 @@ static void atomic_saves()
     g_assert_false(gtk_selection_model_is_selected(GTK_SELECTION_MODEL(second.get()), 0));
 }
 
+static void desktop_folder_events()
+{
+    const auto root = fs::path(g_get_user_data_dir()) / "Desktop";
+    fs::create_directories(root);
+    std::ofstream(root / "first") << "first";
+    ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
+    ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
+    DesktopDirectory directory{folder.get(), app.get()};
+    auto *items = directory.items.get();
+    g_assert_true(wait_for([&]
+                           { return position_of(items, "first") != GTK_INVALID_LIST_POSITION; }));
+
+    fs::permissions(root, fs::perms::owner_exec | fs::perms::owner_read | fs::perms::owner_write);
+    std::ofstream(root / "second") << "second";
+    g_assert_true(wait_for([&]
+                           { return position_of(items, "second") != GTK_INVALID_LIST_POSITION; }));
+    g_assert_cmpuint(g_list_model_get_n_items(items), ==, 2);
+    g_assert_cmpuint(position_of(items, "Desktop"), ==, GTK_INVALID_LIST_POSITION);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
     g_test_add_func("/directory/atomic-saves", atomic_saves);
+    g_test_add_func("/directory/desktop-folder-events", desktop_folder_events);
     return g_test_run();
 }

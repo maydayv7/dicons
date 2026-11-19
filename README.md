@@ -8,10 +8,21 @@
 - [x] Start default application for selected file
 - [x] Update icons when files are added, removed, renamed, or edited
 - [x] Drag and Drop files from/to the Desktop
-- [x] Mirror the Desktop folder on connected monitors
+- [x] Mirror on connected monitors
+- [x] Rename files and move to Trash
 - [ ] File thumbnails
 - [ ] Sort icons by name, type, or date
 - [ ] Right-click context menu
+
+### Keyboard shortcuts
+
+| Key    | Action                                                        |
+| ------ | ------------------------------------------------------------- |
+| Enter  | Open the focused icon                                         |
+| Ctrl+A | Select all icons                                              |
+| Esc    | Clear the selection                                           |
+| F2     | Edit the filename. Enter or clicking away saves. Esc cancels. |
+| Delete | Move all selected items to Trash                              |
 
 ## Supported Desktops
 

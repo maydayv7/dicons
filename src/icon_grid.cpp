@@ -1,9 +1,9 @@
 #include "icon_grid.hpp"
+#include "grid_selection.hpp"
 #include "desktop_directory.hpp"
 #include "launch.hpp"
 
 #include <gio/gdesktopappinfo.h>
-#include <vector>
 
 static bool is_launcher(GFileInfo *info)
 {
@@ -30,7 +30,7 @@ static void launcher_loaded(GObject *source, GAsyncResult *result, gpointer data
 
     GtkWidget *box = gtk_list_item_get_child(item);
     GtkImage *image = GTK_IMAGE(gtk_widget_get_first_child(box));
-    GtkLabel *label = GTK_LABEL(gtk_widget_get_last_child(box));
+    GtkLabel *label = GTK_LABEL(gtk_widget_get_next_sibling(GTK_WIDGET(image)));
     gtk_label_set_text(label, g_app_info_get_display_name(app));
     if (g_app_info_get_icon(app))
         gtk_image_set_from_gicon(image, g_app_info_get_icon(app));
@@ -41,7 +41,7 @@ static void refresh_item(GtkListItem *item)
     GFileInfo *info = static_cast<GFileInfo *>(gtk_list_item_get_item(item));
     GtkWidget *box = gtk_list_item_get_child(item);
     GtkImage *image = GTK_IMAGE(gtk_widget_get_first_child(box));
-    GtkLabel *label = GTK_LABEL(gtk_widget_get_last_child(box));
+    GtkLabel *label = GTK_LABEL(gtk_widget_get_next_sibling(GTK_WIDGET(image)));
     gtk_label_set_text(label, g_file_info_get_display_name(info));
     if (g_file_info_get_icon(info))
         gtk_image_set_from_gicon(image, g_file_info_get_icon(info));
@@ -83,16 +83,7 @@ static GdkContentProvider *prepare_drag(GtkDragSource *, double, double,
     if (!gtk_selection_model_is_selected(selection, position))
         gtk_selection_model_select_item(selection, position, TRUE);
 
-    g_autoptr(GtkBitset) selected = gtk_selection_model_get_selection(selection);
-    std::vector<GFile *> files;
-    GtkBitsetIter iter;
-    for (gboolean valid = gtk_bitset_iter_init_first(&iter, selected, &position);
-         valid; valid = gtk_bitset_iter_next(&iter, &position))
-    {
-        g_autoptr(GFileInfo) info = G_FILE_INFO(g_list_model_get_item(G_LIST_MODEL(selection), position));
-        files.push_back(item_file(info));
-    }
-
+    auto files = selected_files(selection);
     g_auto(GValue) value = G_VALUE_INIT;
     g_value_init(&value, GDK_TYPE_FILE_LIST);
     g_value_take_boxed(&value, gdk_file_list_new_from_array(files.data(), files.size()));

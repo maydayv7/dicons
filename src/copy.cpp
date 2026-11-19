@@ -1,7 +1,6 @@
 #include "copy.hpp"
+#include "file_rename.hpp"
 
-#include <cerrno>
-#include <fcntl.h>
 #include <glib/gstdio.h>
 #include <cstdio>
 #include <cstdlib>
@@ -86,21 +85,6 @@ static gboolean remove_tree(GFile *file, GError **error)
     return g_file_delete(file, nullptr, error);
 }
 
-static gboolean publish(GFile *staged, GFile *destination, GError **error)
-{
-#ifdef __linux__
-    // Keep Both must never overwrite a file created by a competing drop
-    if (renameat2(AT_FDCWD, g_file_peek_path(staged), AT_FDCWD,
-                  g_file_peek_path(destination), RENAME_NOREPLACE) == 0)
-        return TRUE;
-    int saved_errno = errno;
-    g_set_error_literal(error, G_IO_ERROR, g_io_error_from_errno(saved_errno), g_strerror(saved_errno));
-    return FALSE;
-#else
-    return g_file_move(staged, destination, G_FILE_COPY_NO_FALLBACK_FOR_MOVE, nullptr, nullptr, nullptr, error);
-#endif
-}
-
 ObjectPtr<GFile> desktop_copy_item(GFile *source, GFile *desktop, GFile *stage, bool keep_both,
                                    GError **error)
 {
@@ -152,7 +136,7 @@ ObjectPtr<GFile> desktop_copy_item(GFile *source, GFile *desktop, GFile *stage, 
             const auto alternative = std::format("{} ({}){}", stem.native(), n, extension.native());
             destination.reset(g_file_get_child(desktop, alternative.c_str()));
         }
-        if (publish(staged, destination.get(), error))
+        if (rename_no_replace(staged, destination.get(), error))
             return destination;
         if (!keep_both || !g_error_matches(*error, G_IO_ERROR, G_IO_ERROR_EXISTS))
             break;

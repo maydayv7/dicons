@@ -34,6 +34,7 @@ public:
 
     void start(GFile *folder, GFileMonitor *monitor, GtkApplication *app)
     {
+        folder_ = retain(folder);
         if (monitor)
         {
             monitor_ = retain(monitor);
@@ -59,8 +60,9 @@ public:
     }
 
 private:
-    static constexpr auto attributes = "standard::name,standard::display-name,standard::icon,standard::type";
+    static constexpr auto attributes = "standard::name,standard::display-name,standard::edit-name,standard::icon,standard::type";
     ObjectPtr<GtkDirectoryList> scan_;
+    ObjectPtr<GFile> folder_;
     ObjectPtr<GFileMonitor> monitor_;
     std::deque<ObjectPtr<GFile>> pending_;
     FileSet queued_ = make_file_set();
@@ -108,7 +110,7 @@ private:
 
     void queue(GFile *file)
     {
-        if (file && g_hash_table_add(queued_.get(), g_object_ref(file)))
+        if (file && g_file_has_parent(file, folder_.get()) && g_hash_table_add(queued_.get(), g_object_ref(file)))
             pending_.push_back(retain(file));
     }
 

@@ -1,6 +1,7 @@
 #include "desktop_windows.hpp"
 #include "desktop_directory.hpp"
 #include "icon_grid.hpp"
+#include "keyboard.hpp"
 #include "transfer.hpp"
 
 #include <gtk4-layer-shell.h>
@@ -44,6 +45,7 @@ static void add_window(GtkApplication *app, const DesktopDirectory &directory, G
     GtkWidget *scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), GTK_WIDGET(grid));
     gtk_window_set_child(window, desktop_overlay(scroll));
+    attach_desktop_keys(window, grid);
     transfer_attach(window, grid, directory.folder.get(), directory.staging.get());
     gtk_window_present(window);
 }

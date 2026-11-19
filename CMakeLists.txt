@@ -17,6 +17,10 @@ add_executable(dicons
     src/desktop_directory.cpp
     src/desktop_windows.cpp
     src/icon_grid.cpp
+    src/grid_selection.cpp
+    src/keyboard.cpp
+    src/inline_rename.cpp
+    src/file_rename.cpp
     src/launch.cpp
     src/notifications.cpp
     src/collision_dialog.cpp
@@ -27,10 +31,15 @@ target_link_libraries(dicons PRIVATE PkgConfig::DICONS_DEPS)
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(test-copy tests/copy.cpp src/copy.cpp)
+    add_executable(test-copy tests/copy.cpp src/copy.cpp src/file_rename.cpp)
     target_include_directories(test-copy PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-copy PRIVATE PkgConfig::DICONS_DEPS)
     add_test(NAME desktop-copy COMMAND test-copy)
+
+    add_executable(test-rename tests/rename.cpp src/file_rename.cpp)
+    target_include_directories(test-rename PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-rename PRIVATE PkgConfig::DICONS_DEPS)
+    add_test(NAME desktop-rename COMMAND test-rename)
 
     add_executable(test-directory tests/desktop_directory.cpp src/desktop_directory.cpp src/notifications.cpp)
     target_include_directories(test-directory PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
