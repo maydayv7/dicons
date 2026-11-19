@@ -4,3 +4,4 @@
 
 bool has_launcher_name(GFileInfo *info);
 void open_item(GtkGridView *grid, guint position, GtkApplication *app);
+void open_terminal(GtkApplication *app, GFile *folder);

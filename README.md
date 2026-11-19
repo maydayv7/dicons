@@ -12,17 +12,19 @@
 - [x] Rename files and move to Trash
 - [ ] File thumbnails
 - [ ] Sort icons by name, type, or date
-- [ ] Right-click context menu
+- [x] Right-click context menu, create Templates
 
 ### Keyboard shortcuts
 
-| Key    | Action                                                        |
-| ------ | ------------------------------------------------------------- |
-| Enter  | Open the focused icon                                         |
-| Ctrl+A | Select all icons                                              |
-| Esc    | Clear the selection                                           |
-| F2     | Edit the filename. Enter or clicking away saves. Esc cancels. |
-| Delete | Move all selected items to Trash                              |
+| Key               | Action                                                        |
+| ----------------- | ------------------------------------------------------------- |
+| Enter             | Open the focused icon                                         |
+| Menu or Shift+F10 | Open the context menu for focused icon or desktop             |
+| Ctrl+H            | Toggle hidden items on all monitors                           |
+| Ctrl+A            | Select all icons                                              |
+| Esc               | Clear the selection                                           |
+| F2                | Edit the filename. Enter or clicking away saves. Esc cancels. |
+| Delete            | Move all selected items to Trash                              |
 
 ## Supported Desktops
 
@@ -38,6 +40,7 @@ Exclusively tested on Hyprland, but should be compatible with any `wlroots` base
 - GTK >=4.12 (`gtk4`)
 - GLib >=2.74 (`gio-unix-2.0`)
 - GTK4 Layer Shell (`gtk4-layer-shell-0`)
+- `xdg-terminal-exec` for Open in Terminal
 
 ### Installation
 

@@ -15,9 +15,20 @@ FileSet make_file_set()
     return FileSet{g_hash_table_new_full(g_file_hash, equal, g_object_unref, nullptr)};
 }
 
-static gboolean visible_item(gpointer item, gpointer staging)
+struct Visibility
 {
-    return !g_hash_table_contains(static_cast<GHashTable *>(staging), item_file(G_FILE_INFO(item)));
+    FileSet staging;
+    ObjectPtr<GSimpleAction> show_hidden;
+};
+
+static gboolean visible_item(gpointer item, gpointer data)
+{
+    auto &visibility = *static_cast<Visibility *>(data);
+    auto *info = G_FILE_INFO(item);
+    if (g_hash_table_contains(visibility.staging.get(), item_file(info)))
+        return false;
+    g_autoptr(GVariant) show = g_action_get_state(G_ACTION(visibility.show_hidden.get()));
+    return g_variant_get_boolean(show) || !g_file_info_get_is_hidden(info);
 }
 
 static void directory_error(GtkDirectoryList *list, GParamSpec *, GtkApplication *app)
@@ -60,7 +71,7 @@ public:
     }
 
 private:
-    static constexpr auto attributes = "standard::name,standard::display-name,standard::edit-name,standard::icon,standard::type";
+    static constexpr auto attributes = "standard::name,standard::display-name,standard::edit-name,standard::icon,standard::type,standard::is-hidden";
     ObjectPtr<GtkDirectoryList> scan_;
     ObjectPtr<GFile> folder_;
     ObjectPtr<GFileMonitor> monitor_;
@@ -172,8 +183,13 @@ DesktopDirectory::DesktopDirectory(GFile *location, GtkApplication *app)
     if (error)
         notify_error(G_APPLICATION(app), "Could not monitor the Desktop folder", error->message);
 
-    auto *filter = gtk_custom_filter_new(visible_item, g_hash_table_ref(staging.get()), [](gpointer data)
-                                         { g_hash_table_unref(static_cast<GHashTable *>(data)); });
+    show_hidden.reset(g_simple_action_new_stateful("show-hidden", nullptr, g_variant_new_boolean(false)));
+    auto *visibility = new Visibility{FileSet{g_hash_table_ref(staging.get())}, retain(show_hidden.get())};
+    auto *filter = gtk_custom_filter_new(visible_item, visibility, [](gpointer data)
+                                         { delete static_cast<Visibility *>(data); });
+    g_signal_connect_object(show_hidden.get(), "notify::state", G_CALLBACK(+[](GObject *, GParamSpec *, GtkFilter *filter)
+                                                                           { gtk_filter_changed(filter, GTK_FILTER_CHANGE_DIFFERENT); }),
+                            filter, GConnectFlags{});
     items.reset(G_LIST_MODEL(gtk_filter_list_model_new(G_LIST_MODEL(g_object_ref(updates_->entries.get())), GTK_FILTER(filter))));
     updates_->start(location, changes.get(), app);
 }

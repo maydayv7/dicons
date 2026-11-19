@@ -64,3 +64,26 @@ void open_item(GtkGridView *grid, guint position, GtkApplication *app)
     g_app_info_launch_default_for_uri_async(uri, G_APP_LAUNCH_CONTEXT(context), nullptr,
                                             default_opened, g_object_ref(app));
 }
+
+static void terminal_finished(GObject *source, GAsyncResult *result, gpointer data)
+{
+    ObjectPtr<GApplication> app{G_APPLICATION(data)};
+    g_autoptr(GError) error = nullptr;
+    if (!g_subprocess_wait_check_finish(G_SUBPROCESS(source), result, &error))
+        notify_error(app.get(), "Could not open terminal", error->message);
+}
+
+void open_terminal(GtkApplication *app, GFile *folder)
+{
+    g_autoptr(GError) error = nullptr;
+    g_autoptr(GSubprocessLauncher) launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE);
+    g_subprocess_launcher_set_cwd(launcher, g_file_peek_path(folder));
+    g_autofree char *argument = g_strdup_printf("--dir=%s", g_file_peek_path(folder));
+    g_autoptr(GSubprocess) process = g_subprocess_launcher_spawn(launcher, &error, "xdg-terminal-exec", argument, nullptr);
+    if (!process)
+    {
+        notify_file_error(G_APPLICATION(app), "Could not open terminal", folder, error);
+        return;
+    }
+    g_subprocess_wait_check_async(process, nullptr, terminal_finished, g_object_ref(app));
+}

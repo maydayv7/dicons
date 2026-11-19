@@ -98,10 +98,40 @@ static void desktop_folder_events()
     g_assert_cmpuint(position_of(items, "Desktop"), ==, GTK_INVALID_LIST_POSITION);
 }
 
+static void hidden_items()
+{
+    const auto root = fs::path(g_get_user_data_dir()) / "Desktop";
+    fs::create_directories(root);
+    std::ofstream(root / ".hidden") << "hidden";
+    std::ofstream(root / "visible") << "visible";
+    ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
+    ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
+    DesktopDirectory directory{folder.get(), app.get()};
+    ObjectPtr<GFile> staging{g_file_get_child(folder.get(), ".working")};
+    g_hash_table_add(directory.staging.get(), g_object_ref(staging.get()));
+    fs::create_directory(root / ".working");
+
+    auto *model = directory.items.get();
+    g_assert_true(wait_for([&]
+                           { return position_of(model, "visible") != GTK_INVALID_LIST_POSITION; }));
+    g_assert_cmpuint(g_list_model_get_n_items(model), ==, 1);
+    g_action_activate(G_ACTION(directory.show_hidden.get()), nullptr);
+    g_assert_true(wait_for([&]
+                           { return position_of(model, ".hidden") != GTK_INVALID_LIST_POSITION; }));
+    g_assert_cmpuint(position_of(model, ".working"), ==, GTK_INVALID_LIST_POSITION);
+    fs::rename(root / "visible", root / ".renamed");
+    g_assert_true(wait_for([&]
+                           { return position_of(model, ".renamed") != GTK_INVALID_LIST_POSITION; }));
+    g_action_activate(G_ACTION(directory.show_hidden.get()), nullptr);
+    g_assert_true(wait_for([&]
+                           { return g_list_model_get_n_items(model) == 0; }));
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
     g_test_add_func("/directory/atomic-saves", atomic_saves);
     g_test_add_func("/directory/desktop-folder-events", desktop_folder_events);
+    g_test_add_func("/directory/hidden-items", hidden_items);
     return g_test_run();
 }

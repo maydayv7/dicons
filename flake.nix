@@ -18,17 +18,24 @@
           src = self;
           strictDeps = true;
           doCheck = true;
+
           nativeBuildInputs = [
             pkgs.cmake
             pkgs.ninja
             pkgs.pkg-config
             pkgs.wrapGAppsHook4
           ];
+
           buildInputs = [
             pkgs.glib
             pkgs.gtk4
             pkgs.gtk4-layer-shell
           ];
+
+          preFixup = ''
+            gappsWrapperArgs+=(--suffix PATH : "${pkgs.xdg-terminal-exec}/bin")
+          '';
+
           meta.mainProgram = "dicons";
         };
       }

@@ -15,6 +15,7 @@ struct DesktopDirectory
     ObjectPtr<GFile> folder;
     ObjectPtr<GFileMonitor> changes;
     FileSet staging;
+    ObjectPtr<GSimpleAction> show_hidden;
     ObjectPtr<GListModel> items;
 
 private:

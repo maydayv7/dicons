@@ -1,14 +1,13 @@
 #include "transfer.hpp"
 #include "grid_selection.hpp"
 #include "copy.hpp"
+#include "copy_stage.hpp"
 #include "collision_dialog.hpp"
 #include "desktop_directory.hpp"
 #include "notifications.hpp"
 
-#include <cerrno>
 #include <deque>
 #include <memory>
-#include <glib/gstdio.h>
 
 namespace
 {
@@ -99,13 +98,7 @@ static void next_item(Transfer *transfer)
     }
 
     if (transfer->stage)
-    {
-        DropSite &site = transfer->site;
-        g_autoptr(GError) error = nullptr;
-        if (!g_file_delete(transfer->stage.get(), nullptr, &error))
-            notify_error(transfer->app.get(), "Could not remove temporary folder", error->message);
-        g_hash_table_remove(site.staging.get(), transfer->stage.get());
-    }
+        remove_copy_stage(transfer->stage.get(), transfer->site.staging.get(), transfer->app.get());
     delete transfer;
 }
 
@@ -119,14 +112,9 @@ static bool prepare_copy(Transfer &transfer, const GValue *value)
         return false;
     }
 
-    g_autofree char *temp = g_build_filename(g_file_peek_path(transfer.site.desktop.get()), ".dicons-XXXXXX", nullptr);
-    if (!g_mkdtemp_full(temp, 0700))
-    {
-        notify_error(transfer.app.get(), "Could not start desktop copy", g_strerror(errno));
+    transfer.stage = make_copy_stage(transfer.site.desktop.get(), transfer.site.staging.get(), transfer.app.get());
+    if (!transfer.stage)
         return false;
-    }
-    transfer.stage.reset(g_file_new_for_path(temp));
-    g_hash_table_add(transfer.site.staging.get(), g_object_ref(transfer.stage.get()));
     for (GSList *link = files; link; link = link->next)
         transfer.files.push_back(retain(G_FILE(link->data)));
     return true;

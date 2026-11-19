@@ -106,6 +106,7 @@ static void setup_item(GtkListItemFactory *, GtkListItem *item, GFileMonitor *ch
     gtk_label_set_max_width_chars(GTK_LABEL(label), 12);
     gtk_box_append(GTK_BOX(box), image);
     gtk_box_append(GTK_BOX(box), label);
+    g_object_set_data(G_OBJECT(box), "desktop-item", item);
     gtk_list_item_set_child(item, box);
 
     GtkDragSource *drag = gtk_drag_source_new();

@@ -18,6 +18,11 @@ add_executable(dicons
     src/desktop_windows.cpp
     src/icon_grid.cpp
     src/grid_selection.cpp
+    src/selection_actions.cpp
+    src/context_menu.cpp
+    src/create_item.cpp
+    src/copy_stage.cpp
+    src/templates.cpp
     src/keyboard.cpp
     src/inline_rename.cpp
     src/file_rename.cpp

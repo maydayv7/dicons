@@ -1,5 +1,6 @@
 #include "grid_selection.hpp"
 #include "desktop_directory.hpp"
+#include "inline_rename.hpp"
 
 std::vector<GFile *> selected_files(GtkSelectionModel *selection)
 {
@@ -22,6 +23,7 @@ namespace
     {
         FileSet files = make_file_set();
         ObjectPtr<GFile> focus;
+        ObjectPtr<GFile> rename;
     };
 }
 
@@ -34,7 +36,13 @@ static void select_arrivals(GListModel *model, guint first, guint, guint added, 
         GFile *file = item_file(info.get());
         if (!g_hash_table_remove(pending->files.get(), file))
             continue;
-        gtk_selection_model_select_item(GTK_SELECTION_MODEL(model), i, false);
+        bool rename = pending->rename && g_file_equal(pending->rename.get(), file);
+        gtk_selection_model_select_item(GTK_SELECTION_MODEL(model), i, rename);
+        if (rename && gtk_widget_get_root(GTK_WIDGET(grid)))
+        {
+            pending->rename.reset();
+            start_inline_rename(grid, i);
+        }
         if (pending->focus && g_file_equal(pending->focus.get(), file))
         {
             pending->focus.reset();
@@ -46,7 +54,7 @@ static void select_arrivals(GListModel *model, guint first, guint, guint added, 
     }
 }
 
-void select_when_listed(GtkGridView *grid, GFile *file, bool focus)
+void select_when_listed(GtkGridView *grid, GFile *file, ArrivalAction action)
 {
     auto *model = G_LIST_MODEL(gtk_grid_view_get_model(grid));
     auto *pending = static_cast<PendingSelection *>(g_object_get_data(G_OBJECT(grid), "pending-selection"));
@@ -58,7 +66,9 @@ void select_when_listed(GtkGridView *grid, GFile *file, bool focus)
         g_signal_connect_object(model, "items-changed", G_CALLBACK(select_arrivals), grid, G_CONNECT_AFTER);
     }
     g_hash_table_add(pending->files.get(), g_object_ref(file));
-    if (focus)
+    if (action == ArrivalAction::rename)
+        pending->rename = retain(file);
+    if (action == ArrivalAction::focus)
         pending->focus = retain(file);
     select_arrivals(model, 0, 0, g_list_model_get_n_items(model), grid);
 }

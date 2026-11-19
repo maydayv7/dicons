@@ -74,7 +74,7 @@ static void rename_finished(GObject *source, GAsyncResult *result, gpointer data
     if (!renamed)
         notify_file_error(request->app.get(), "Could not rename item", G_FILE(source), error);
     else if (request->keep_selected)
-        select_when_listed(request->grid.get(), renamed.get(), true);
+        select_when_listed(request->grid.get(), renamed.get(), ArrivalAction::focus);
 }
 
 static void commit_name(RenameEditor &editor, bool restore_focus)
@@ -98,6 +98,8 @@ static void commit_name(RenameEditor &editor, bool restore_focus)
 
 static void show_editor(RenameEditor &editor, GtkListItem *item)
 {
+    if (editor.editing && editor.editing != item)
+        commit_name(editor, false);
     auto *info = G_FILE_INFO(gtk_list_item_get_item(item));
     auto *label = tile_label(item);
     auto *entry = gtk_widget_get_next_sibling(label);
