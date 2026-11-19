@@ -12,7 +12,7 @@
 - [x] Rename files and move to Trash
 - [x] Right-click context menu, create Templates
 - [x] Sort icons by name, modification time, size, or file type
-- [ ] File thumbnails
+- [x] Image and document thumbnails
 
 ### Keyboard shortcuts
 
@@ -41,6 +41,7 @@ Exclusively tested on Hyprland, but should be compatible with any `wlroots` base
 - GLib >=2.74 (`gio-unix-2.0`)
 - GTK4 Layer Shell (`gtk4-layer-shell-0`)
 - `xdg-terminal-exec` for Open in Terminal
+- Optional system thumbnailers (like [Papers](https://gitlab.gnome.org/GNOME/papers) provides for PDFs)
 
 ### Installation
 

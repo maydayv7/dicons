@@ -218,6 +218,48 @@ static void launcher_order()
                            { return position_of(model, "middle.txt") == 0; }));
 }
 
+static void symlink_targets()
+{
+    const auto base = fs::path(g_get_user_data_dir());
+    const auto root = base / "Desktop";
+    fs::create_directories(root);
+    std::ofstream(base / "target.txt") << "abc";
+    fs::create_symlink(base / "target.txt", base / "hop");
+    fs::create_symlink("../hop", root / "shortcut");
+
+    ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
+    ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
+    DesktopDirectory directory{folder.get(), app.get()};
+    auto expect = [&](GFileType type, goffset size = -1)
+    {
+        g_assert_true(wait_for([&]
+                               {
+            ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(directory.items.get(), 0))};
+            return info && g_file_info_has_attribute(info.get(), "dicons::link-targets") &&
+                   g_file_info_get_is_symlink(info.get()) && g_file_info_get_file_type(info.get()) == type &&
+                   (size == -1 || g_file_info_get_size(info.get()) == size); }));
+    };
+    expect(G_FILE_TYPE_REGULAR, 3);
+    std::ofstream(base / "target.txt", std::ios::app) << "def";
+    expect(G_FILE_TYPE_REGULAR, 6);
+    fs::remove(base / "target.txt");
+    expect(G_FILE_TYPE_SYMBOLIC_LINK);
+    fs::create_directory(base / "target.txt");
+    expect(G_FILE_TYPE_DIRECTORY);
+    fs::remove(base / "hop");
+    expect(G_FILE_TYPE_SYMBOLIC_LINK);
+    std::ofstream(base / "hop") << "new";
+    expect(G_FILE_TYPE_REGULAR, 3);
+    std::ofstream(base / "app.desktop") << "[Desktop Entry]\nType=Application\nName=Calendar\nIcon=office-calendar\nExec=true\n";
+    fs::remove(base / "hop");
+    fs::create_symlink("app.desktop", base / "hop");
+    g_assert_true(wait_for([&]
+                           {
+        ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(directory.items.get(), 0))};
+        g_autoptr(GIcon) expected = g_themed_icon_new("office-calendar");
+        return info && g_file_info_get_icon(info.get()) && g_icon_equal(g_file_info_get_icon(info.get()), expected); }));
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
@@ -226,5 +268,6 @@ int main(int argc, char **argv)
     g_test_add_func("/directory/hidden-items", hidden_items);
     g_test_add_func("/directory/sorted-directory", sorted_directory);
     g_test_add_func("/directory/launcher-order", launcher_order);
+    g_test_add_func("/directory/symlink-targets", symlink_targets);
     return g_test_run();
 }

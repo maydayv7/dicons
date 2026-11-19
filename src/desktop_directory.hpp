@@ -18,6 +18,7 @@ struct DesktopDirectory
     DesktopSort sorting;
     FileSet staging;
     ObjectPtr<GSimpleAction> show_hidden;
+    ObjectPtr<GSimpleAction> show_thumbnails{g_simple_action_new_stateful("show-thumbnails", nullptr, g_variant_new_boolean(true))};
     ObjectPtr<GListModel> items;
 
 private:

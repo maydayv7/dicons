@@ -16,9 +16,13 @@ add_executable(dicons
     src/main.cpp
     src/desktop_directory.cpp
     src/desktop_item.cpp
+    src/symlink.cpp
     src/desktop_sort.cpp
     src/desktop_windows.cpp
     src/icon_grid.cpp
+    src/item_icon.cpp
+    src/thumbnail_cache.cpp
+    src/thumbnailer.cpp
     src/grid_selection.cpp
     src/selection_actions.cpp
     src/context_menu.cpp
@@ -48,10 +52,15 @@ if(BUILD_TESTING)
     target_link_libraries(test-rename PRIVATE PkgConfig::DICONS_DEPS)
     add_test(NAME desktop-rename COMMAND test-rename)
 
-    add_executable(test-directory tests/desktop_directory.cpp src/desktop_directory.cpp src/desktop_item.cpp src/desktop_sort.cpp src/notifications.cpp)
+    add_executable(test-directory tests/desktop_directory.cpp src/desktop_directory.cpp src/desktop_item.cpp src/symlink.cpp src/desktop_sort.cpp src/notifications.cpp)
     target_include_directories(test-directory PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-directory PRIVATE PkgConfig::DICONS_DEPS)
     add_test(NAME desktop-directory COMMAND test-directory)
+
+    add_executable(test-thumbnails tests/thumbnails.cpp src/thumbnail_cache.cpp src/thumbnailer.cpp src/desktop_item.cpp src/symlink.cpp)
+    target_include_directories(test-thumbnails PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-thumbnails PRIVATE PkgConfig::DICONS_DEPS)
+    add_test(NAME desktop-thumbnails COMMAND test-thumbnails)
 endif()
 
 install(TARGETS dicons RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")

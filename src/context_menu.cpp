@@ -43,6 +43,7 @@ static ObjectPtr<GMenu> background_menu(GFile *folder)
     g_menu_append_submenu(menu.get(), "Create New", G_MENU_MODEL(create));
     append_sort_menu(menu.get());
     g_menu_append(menu.get(), "Show Hidden Items", "desktop.show-hidden");
+    g_menu_append(menu.get(), "Show Thumbnails", "desktop.show-thumbnails");
     append_terminal(menu.get(), folder);
     return menu;
 }
@@ -167,6 +168,7 @@ void attach_context_menu(GtkWindow *window, GtkGridView *grid, const DesktopDire
     };
     g_action_map_add_action_entries(G_ACTION_MAP(group), actions, G_N_ELEMENTS(actions), menu);
     g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(directory.show_hidden.get()));
+    g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(directory.show_thumbnails.get()));
     gtk_widget_insert_action_group(desktop, "desktop", G_ACTION_GROUP(group));
     gtk_widget_insert_action_group(desktop, "sort", G_ACTION_GROUP(directory.sorting.actions.get()));
 

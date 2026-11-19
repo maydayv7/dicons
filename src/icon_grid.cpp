@@ -3,23 +3,26 @@
 #include "desktop_directory.hpp"
 #include "launch.hpp"
 #include "desktop_item.hpp"
+#include "item_icon.hpp"
 
 static void refresh_item(GtkListItem *item)
 {
     GFileInfo *info = static_cast<GFileInfo *>(gtk_list_item_get_item(item));
     GtkWidget *box = gtk_list_item_get_child(item);
-    GtkImage *image = GTK_IMAGE(gtk_widget_get_first_child(box));
-    GtkLabel *label = GTK_LABEL(gtk_widget_get_next_sibling(GTK_WIDGET(image)));
+    GtkWidget *icon = gtk_widget_get_first_child(box);
+    GtkLabel *label = GTK_LABEL(gtk_widget_get_next_sibling(icon));
     gtk_label_set_text(label, item_label(info));
-    if (g_file_info_get_icon(info))
-        gtk_image_set_from_gicon(image, g_file_info_get_icon(info));
-    else
-        gtk_image_set_from_icon_name(image, "text-x-generic");
+    bind_item_icon(icon, info);
 }
 
 static void bind_item(GtkListItemFactory *, GtkListItem *item, gpointer)
 {
     refresh_item(item);
+}
+
+static void unbind_item(GtkListItemFactory *, GtkListItem *item, gpointer)
+{
+    unbind_item_icon(gtk_widget_get_first_child(gtk_list_item_get_child(item)));
 }
 
 static void entry_updated(GListModel *entries, guint position, guint removed, guint added, GtkListItem *item)
@@ -51,13 +54,12 @@ static GdkContentProvider *prepare_drag(GtkDragSource *, double, double,
     return gdk_content_provider_new_for_value(&value);
 }
 
-static void setup_item(GtkListItemFactory *, GtkListItem *item, GListModel *entries)
+static void setup_item(GtkListItemFactory *, GtkListItem *item, const DesktopDirectory *directory)
 {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    GtkWidget *image = gtk_image_new();
+    GtkWidget *image = create_item_icon(directory->show_thumbnails.get());
     GtkWidget *label = gtk_label_new(nullptr);
     gtk_widget_set_size_request(box, 96, -1);
-    gtk_image_set_pixel_size(GTK_IMAGE(image), 48);
     gtk_label_set_xalign(GTK_LABEL(label), 0.5);
     gtk_label_set_justify(GTK_LABEL(label), GTK_JUSTIFY_CENTER);
     gtk_label_set_wrap(GTK_LABEL(label), TRUE);
@@ -74,14 +76,15 @@ static void setup_item(GtkListItemFactory *, GtkListItem *item, GListModel *entr
     gtk_drag_source_set_actions(drag, GDK_ACTION_COPY);
     g_signal_connect_object(drag, "prepare", G_CALLBACK(prepare_drag), item, GConnectFlags{});
     gtk_widget_add_controller(box, GTK_EVENT_CONTROLLER(drag));
-    g_signal_connect_object(entries, "items-changed", G_CALLBACK(entry_updated), item, GConnectFlags{});
+    g_signal_connect_object(directory->entries(), "items-changed", G_CALLBACK(entry_updated), item, GConnectFlags{});
 }
 
 GtkGridView *create_icon_grid(const DesktopDirectory &directory, GtkApplication *app)
 {
     auto *factory = gtk_signal_list_item_factory_new();
-    g_signal_connect_object(factory, "setup", G_CALLBACK(setup_item), directory.entries(), GConnectFlags{});
+    g_signal_connect(factory, "setup", G_CALLBACK(setup_item), const_cast<DesktopDirectory *>(&directory));
     g_signal_connect(factory, "bind", G_CALLBACK(bind_item), nullptr);
+    g_signal_connect(factory, "unbind", G_CALLBACK(unbind_item), nullptr);
     auto *selection = gtk_multi_selection_new(g_object_ref(directory.items.get()));
     auto *grid = GTK_GRID_VIEW(gtk_grid_view_new(GTK_SELECTION_MODEL(selection), factory));
     gtk_grid_view_set_max_columns(grid, 128);

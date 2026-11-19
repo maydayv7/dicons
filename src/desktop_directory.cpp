@@ -1,6 +1,7 @@
 #include "desktop_directory.hpp"
 #include "desktop_item.hpp"
 #include "notifications.hpp"
+#include "symlink.hpp"
 
 #include <deque>
 
@@ -70,7 +71,8 @@ public:
 
 private:
     static constexpr auto attributes = "standard::name,standard::display-name,standard::edit-name,standard::icon,"
-                                       "standard::type,standard::is-hidden,standard::content-type,standard::size,"
+                                       "standard::type,standard::is-hidden,standard::is-symlink,standard::symlink-target,"
+                                       "standard::content-type,standard::size,access::can-read,"
                                        "time::modified,time::modified-nsec";
     ObjectPtr<GtkDirectoryList> scan_;
     ObjectPtr<GFile> folder_;
@@ -86,7 +88,7 @@ private:
         {
             auto *info = G_FILE_INFO(g_list_model_get_item(scan, i));
             cache_filename_key(info);
-            if (is_desktop_launcher(info))
+            if (is_desktop_launcher(info) || g_file_info_get_is_symlink(info))
                 self->queue(item_file(info));
             g_ptr_array_add(batch, info);
         }
@@ -154,6 +156,7 @@ private:
             g_task_return_error(task, g_steal_pointer(&error));
             return;
         }
+        read_symlink_target(info, file);
         read_launcher_presentation(info, file);
         cache_filename_key(info);
         g_file_info_set_attribute_object(info, "standard::file", G_OBJECT(file));
@@ -189,6 +192,7 @@ private:
                 {
                     // GtkMultiSelection tracks the object when its sorted position changes
                     g_file_info_copy_into(info, current.get());
+                    update_link_watch(current.get());
                     gpointer item = current.get();
                     g_list_store_splice(entries.get(), i, 1, &item, 1);
                 }
@@ -198,7 +202,21 @@ private:
             }
         }
         if (info)
+        {
+            update_link_watch(info);
             g_list_store_append(entries.get(), info);
+        }
+    }
+
+    void update_link_watch(GFileInfo *info)
+    {
+        watch_symlink_target(info, [weak = weak_from_this(), info]
+                             {
+            if (auto self = weak.lock())
+            {
+                self->queue(item_file(info));
+                self->read_next();
+            } });
     }
 };
 
