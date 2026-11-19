@@ -127,11 +127,104 @@ static void hidden_items()
                            { return g_list_model_get_n_items(model) == 0; }));
 }
 
+static void sorted_directory()
+{
+    const auto root = fs::path(g_get_user_data_dir()) / "Desktop";
+    fs::create_directories(root / "Zoo");
+    std::ofstream(root / "File10.txt") << "a";
+    std::ofstream(root / "file2.txt") << "bb";
+    std::ofstream(root / "photo.png") << "\x89PNG\r\n\x1a\n";
+    const auto oldest = fs::file_time_type::clock::now() - 2h;
+    fs::last_write_time(root / "File10.txt", oldest);
+    fs::last_write_time(root / "file2.txt", oldest);
+    fs::last_write_time(root / "photo.png", oldest + 1h);
+
+    ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
+    ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
+    DesktopDirectory directory{folder.get(), app.get()};
+    auto *model = directory.items.get();
+    const auto expect = [&](std::initializer_list<const char *> names)
+    {
+        g_assert_true(wait_for([&]
+                               {
+            guint i = 0;
+            for (auto name : names)
+                if (position_of(model, name) != i++)
+                    return false;
+            return g_list_model_get_n_items(model) == names.size(); }));
+    };
+    auto *actions = G_ACTION_GROUP(directory.sorting.actions.get());
+    const auto choose = [&](const char *action, const char *value)
+    { g_action_group_activate_action(actions, action, g_variant_new_string(value)); };
+
+    expect({"Zoo", "file2.txt", "File10.txt", "photo.png"});
+    ObjectPtr<GtkMultiSelection> left{gtk_multi_selection_new(g_object_ref(model))};
+    ObjectPtr<GtkMultiSelection> right{gtk_multi_selection_new(g_object_ref(model))};
+    gtk_selection_model_select_item(GTK_SELECTION_MODEL(left.get()), 1, true);
+    gtk_selection_model_select_item(GTK_SELECTION_MODEL(right.get()), 2, true);
+
+    choose("direction", "descending");
+    expect({"Zoo", "photo.png", "File10.txt", "file2.txt"});
+    g_action_group_activate_action(actions, "folders-first", nullptr);
+    choose("direction", "ascending");
+    expect({"file2.txt", "File10.txt", "photo.png", "Zoo"});
+    g_action_group_activate_action(actions, "folders-first", nullptr);
+    choose("field", "modified");
+    expect({"Zoo", "photo.png", "file2.txt", "File10.txt"});
+    choose("direction", "ascending");
+    expect({"Zoo", "file2.txt", "File10.txt", "photo.png"});
+    std::ofstream(root / "file2.txt", std::ios::app) << "new";
+    expect({"Zoo", "File10.txt", "photo.png", "file2.txt"});
+    choose("field", "type");
+    expect({"Zoo", "photo.png", "file2.txt", "File10.txt"});
+    choose("field", "size");
+    expect({"Zoo", "File10.txt", "file2.txt", "photo.png"});
+    std::ofstream(root / "File10.txt", std::ios::app) << "now the largest";
+    expect({"Zoo", "file2.txt", "photo.png", "File10.txt"});
+    choose("direction", "descending");
+    expect({"Zoo", "File10.txt", "photo.png", "file2.txt"});
+    g_assert_true(gtk_selection_model_is_selected(GTK_SELECTION_MODEL(left.get()), 3));
+    g_assert_true(gtk_selection_model_is_selected(GTK_SELECTION_MODEL(right.get()), 1));
+
+    std::ofstream(root / "new.txt") << "123456";
+    expect({"Zoo", "File10.txt", "photo.png", "new.txt", "file2.txt"});
+    fs::rename(root / "new.txt", root / "renamed.txt");
+    expect({"Zoo", "File10.txt", "photo.png", "renamed.txt", "file2.txt"});
+}
+
+static void launcher_order()
+{
+    const auto root = fs::path(g_get_user_data_dir()) / "Desktop";
+    fs::create_directories(root);
+    const auto launcher = root / "zz.desktop";
+    auto write_launcher = [&](const char *label)
+    { std::ofstream(launcher) << "[Desktop Entry]\nType=Application\nExec=true\nName=" << label << '\n'; };
+    write_launcher("Alpha");
+    std::ofstream(root / "middle.txt") << "middle";
+    ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
+    ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
+    DesktopDirectory directory{folder.get(), app.get()};
+    auto *model = directory.items.get();
+    g_assert_true(wait_for([&]
+                           { return position_of(model, "middle.txt") == 1; }));
+    write_launcher("Zulu");
+    g_assert_true(wait_for([&]
+                           { return position_of(model, "middle.txt") == 0; }));
+    write_launcher("Alpha");
+    g_assert_true(wait_for([&]
+                           { return position_of(model, "middle.txt") == 1; }));
+    std::ofstream(launcher) << "invalid desktop entry";
+    g_assert_true(wait_for([&]
+                           { return position_of(model, "middle.txt") == 0; }));
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
     g_test_add_func("/directory/atomic-saves", atomic_saves);
     g_test_add_func("/directory/desktop-folder-events", desktop_folder_events);
     g_test_add_func("/directory/hidden-items", hidden_items);
+    g_test_add_func("/directory/sorted-directory", sorted_directory);
+    g_test_add_func("/directory/launcher-order", launcher_order);
     return g_test_run();
 }

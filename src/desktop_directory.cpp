@@ -1,4 +1,5 @@
 #include "desktop_directory.hpp"
+#include "desktop_item.hpp"
 #include "notifications.hpp"
 
 #include <deque>
@@ -53,7 +54,7 @@ public:
         }
         scan_.reset(gtk_directory_list_new(attributes, nullptr));
         gtk_directory_list_set_monitored(scan_.get(), false);
-        g_signal_connect(scan_.get(), "items-changed", G_CALLBACK(scanned_items), entries.get());
+        g_signal_connect(scan_.get(), "items-changed", G_CALLBACK(scanned_items), this);
         g_signal_connect(scan_.get(), "notify::loading", G_CALLBACK(scan_progress), this);
         g_signal_connect_object(scan_.get(), "notify::error", G_CALLBACK(directory_error), app, GConnectFlags{});
         gtk_directory_list_set_file(scan_.get(), folder);
@@ -64,14 +65,13 @@ public:
         if (monitor_)
             g_signal_handlers_disconnect_by_data(monitor_.get(), this);
         if (scan_)
-        {
             g_signal_handlers_disconnect_by_data(scan_.get(), this);
-            g_signal_handlers_disconnect_by_data(scan_.get(), entries.get());
-        }
     }
 
 private:
-    static constexpr auto attributes = "standard::name,standard::display-name,standard::edit-name,standard::icon,standard::type,standard::is-hidden";
+    static constexpr auto attributes = "standard::name,standard::display-name,standard::edit-name,standard::icon,"
+                                       "standard::type,standard::is-hidden,standard::content-type,standard::size,"
+                                       "time::modified,time::modified-nsec";
     ObjectPtr<GtkDirectoryList> scan_;
     ObjectPtr<GFile> folder_;
     ObjectPtr<GFileMonitor> monitor_;
@@ -79,19 +79,24 @@ private:
     FileSet queued_ = make_file_set();
     bool reading_{};
 
-    static void scanned_items(GListModel *scan, guint position, guint removed, guint added, GListStore *entries)
+    static void scanned_items(GListModel *scan, guint position, guint removed, guint added, Updates *self)
     {
         g_autoptr(GPtrArray) batch = g_ptr_array_new_with_free_func(g_object_unref);
         for (guint i = position; i < position + added; ++i)
-            g_ptr_array_add(batch, g_list_model_get_item(scan, i));
-        g_list_store_splice(entries, position, removed, batch->pdata, batch->len);
+        {
+            auto *info = G_FILE_INFO(g_list_model_get_item(scan, i));
+            cache_filename_key(info);
+            if (is_desktop_launcher(info))
+                self->queue(item_file(info));
+            g_ptr_array_add(batch, info);
+        }
+        g_list_store_splice(self->entries.get(), position, removed, batch->pdata, batch->len);
     }
 
     static void scan_progress(GtkDirectoryList *scan, GParamSpec *, Updates *self)
     {
         if (gtk_directory_list_is_loading(scan))
             return;
-        g_signal_handlers_disconnect_by_data(scan, self->entries.get());
         g_signal_handlers_disconnect_by_data(scan, self);
         self->scan_.reset();
         self->read_next();
@@ -108,6 +113,8 @@ private:
             break;
         case G_FILE_MONITOR_EVENT_CREATED:
         case G_FILE_MONITOR_EVENT_DELETED:
+        case G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT:
+        case G_FILE_MONITOR_EVENT_CHANGED:
         case G_FILE_MONITOR_EVENT_ATTRIBUTE_CHANGED:
         case G_FILE_MONITOR_EVENT_MOVED_IN:
         case G_FILE_MONITOR_EVENT_MOVED_OUT:
@@ -133,8 +140,24 @@ private:
         pending_.pop_front();
         g_hash_table_remove(queued_.get(), file.get());
         reading_ = true;
-        g_file_query_info_async(file.get(), attributes, G_FILE_QUERY_INFO_NONE, G_PRIORITY_DEFAULT,
-                                nullptr, file_read, new std::weak_ptr<Updates>(weak_from_this()));
+        ObjectPtr<GTask> task{g_task_new(file.get(), nullptr, file_read, new std::weak_ptr<Updates>(weak_from_this()))};
+        g_task_run_in_thread(task.get(), read_info);
+    }
+
+    static void read_info(GTask *task, gpointer source, gpointer, GCancellable *)
+    {
+        auto *file = G_FILE(source);
+        g_autoptr(GError) error = nullptr;
+        auto *info = g_file_query_info(file, attributes, G_FILE_QUERY_INFO_NONE, nullptr, &error);
+        if (!info)
+        {
+            g_task_return_error(task, g_steal_pointer(&error));
+            return;
+        }
+        read_launcher_presentation(info, file);
+        cache_filename_key(info);
+        g_file_info_set_attribute_object(info, "standard::file", G_OBJECT(file));
+        g_task_return_pointer(task, info, g_object_unref);
     }
 
     static void file_read(GObject *source, GAsyncResult *result, gpointer data)
@@ -142,7 +165,7 @@ private:
         std::unique_ptr<std::weak_ptr<Updates>> lifetime{static_cast<std::weak_ptr<Updates> *>(data)};
         g_autoptr(GError) error = nullptr;
         auto *file = G_FILE(source);
-        ObjectPtr<GFileInfo> info{g_file_query_info_finish(file, result, &error)};
+        ObjectPtr<GFileInfo> info{static_cast<GFileInfo *>(g_task_propagate_pointer(G_TASK(result), &error))};
         if (auto self = lifetime->lock())
         {
             // Newer event supersedes in-flight lookup
@@ -156,17 +179,21 @@ private:
 
     void apply(GFile *file, GFileInfo *info)
     {
-        if (info)
-            g_file_info_set_attribute_object(info, "standard::file", G_OBJECT(file));
-
         auto *model = G_LIST_MODEL(entries.get());
         for (guint i = 0; i < g_list_model_get_n_items(model); ++i)
         {
             ObjectPtr<GFileInfo> current{G_FILE_INFO(g_list_model_get_item(model, i))};
             if (g_file_equal(item_file(current.get()), file))
             {
-                gpointer replacement = info;
-                g_list_store_splice(entries.get(), i, 1, &replacement, info ? 1 : 0);
+                if (info)
+                {
+                    // GtkMultiSelection tracks the object when its sorted position changes
+                    g_file_info_copy_into(info, current.get());
+                    gpointer item = current.get();
+                    g_list_store_splice(entries.get(), i, 1, &item, 1);
+                }
+                else
+                    g_list_store_remove(entries.get(), i);
                 return;
             }
         }
@@ -179,7 +206,7 @@ DesktopDirectory::DesktopDirectory(GFile *location, GtkApplication *app)
     : folder(retain(location)), staging(make_file_set()), updates_(std::make_shared<Updates>())
 {
     g_autoptr(GError) error = nullptr;
-    changes.reset(g_file_monitor_directory(location, G_FILE_MONITOR_WATCH_MOVES, nullptr, &error));
+    ObjectPtr<GFileMonitor> changes{g_file_monitor_directory(location, G_FILE_MONITOR_WATCH_MOVES, nullptr, &error)};
     if (error)
         notify_error(G_APPLICATION(app), "Could not monitor the Desktop folder", error->message);
 
@@ -190,6 +217,12 @@ DesktopDirectory::DesktopDirectory(GFile *location, GtkApplication *app)
     g_signal_connect_object(show_hidden.get(), "notify::state", G_CALLBACK(+[](GObject *, GParamSpec *, GtkFilter *filter)
                                                                            { gtk_filter_changed(filter, GTK_FILTER_CHANGE_DIFFERENT); }),
                             filter, GConnectFlags{});
-    items.reset(G_LIST_MODEL(gtk_filter_list_model_new(G_LIST_MODEL(g_object_ref(updates_->entries.get())), GTK_FILTER(filter))));
+    auto *visible = gtk_filter_list_model_new(G_LIST_MODEL(g_object_ref(updates_->entries.get())), GTK_FILTER(filter));
+    items.reset(G_LIST_MODEL(gtk_sort_list_model_new(G_LIST_MODEL(visible), GTK_SORTER(g_object_ref(sorting.sorter.get())))));
     updates_->start(location, changes.get(), app);
+}
+
+GListModel *DesktopDirectory::entries() const
+{
+    return G_LIST_MODEL(updates_->entries.get());
 }

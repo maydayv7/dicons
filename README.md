@@ -10,9 +10,9 @@
 - [x] Drag and Drop files from/to the Desktop
 - [x] Mirror on connected monitors
 - [x] Rename files and move to Trash
-- [ ] File thumbnails
-- [ ] Sort icons by name, type, or date
 - [x] Right-click context menu, create Templates
+- [x] Sort icons by name, modification time, size, or file type
+- [ ] File thumbnails
 
 ### Keyboard shortcuts
 

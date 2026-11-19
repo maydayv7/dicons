@@ -1,14 +1,9 @@
 #include "launch.hpp"
 #include "desktop_directory.hpp"
+#include "desktop_item.hpp"
 #include "notifications.hpp"
 
 #include <gio/gdesktopappinfo.h>
-#include <string_view>
-
-bool has_launcher_name(GFileInfo *info)
-{
-    return std::string_view{g_file_info_get_name(info)}.ends_with(".desktop");
-}
 
 static void default_opened(GObject *, GAsyncResult *result, gpointer data)
 {

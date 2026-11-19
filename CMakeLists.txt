@@ -15,6 +15,8 @@ pkg_check_modules(DICONS_DEPS REQUIRED IMPORTED_TARGET
 add_executable(dicons
     src/main.cpp
     src/desktop_directory.cpp
+    src/desktop_item.cpp
+    src/desktop_sort.cpp
     src/desktop_windows.cpp
     src/icon_grid.cpp
     src/grid_selection.cpp
@@ -46,7 +48,7 @@ if(BUILD_TESTING)
     target_link_libraries(test-rename PRIVATE PkgConfig::DICONS_DEPS)
     add_test(NAME desktop-rename COMMAND test-rename)
 
-    add_executable(test-directory tests/desktop_directory.cpp src/desktop_directory.cpp src/notifications.cpp)
+    add_executable(test-directory tests/desktop_directory.cpp src/desktop_directory.cpp src/desktop_item.cpp src/desktop_sort.cpp src/notifications.cpp)
     target_include_directories(test-directory PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-directory PRIVATE PkgConfig::DICONS_DEPS)
     add_test(NAME desktop-directory COMMAND test-directory)
