@@ -2,17 +2,16 @@
 #include "desktop_directory.hpp"
 #include "file_rename.hpp"
 #include "grid_selection.hpp"
+#include "icon_grid.hpp"
 #include "notifications.hpp"
 
 #include <cstring>
-#include <unordered_map>
 #include <utility>
 
 namespace
 {
     struct RenameEditor
     {
-        std::unordered_map<GFileInfo *, GtkListItem *> bound;
         GtkListItem *editing{};
         ObjectPtr<GFileInfo> requested;
     };
@@ -144,10 +143,10 @@ static gboolean show_when_bound(GtkWidget *widget, GdkFrameClock *, gpointer)
     auto &editor = editor_for(GTK_GRID_VIEW(widget));
     if (!editor.requested)
         return G_SOURCE_REMOVE;
-    if (auto it = editor.bound.find(editor.requested.get()); it != editor.bound.end())
+    if (auto *item = bound_item(GTK_GRID_VIEW(widget), editor.requested.get()))
     {
-        if (gtk_list_item_get_selected(it->second))
-            show_editor(editor, it->second);
+        if (gtk_list_item_get_selected(item))
+            show_editor(editor, item);
         editor.requested.reset();
     }
     // Scrolling realizes the target during layout
@@ -176,7 +175,6 @@ void attach_inline_rename(GtkWindow *window, GtkGridView *grid)
                                                         {
                                                             auto &editor = editor_for(view);
                                                             auto *info = G_FILE_INFO(gtk_list_item_get_item(item));
-                                                            editor.bound.emplace(info, item);
                                                             if (info == editor.requested.get())
                                                                 gtk_widget_add_tick_callback(GTK_WIDGET(view), show_when_bound, nullptr, nullptr);
                                                         }),
@@ -185,7 +183,6 @@ void attach_inline_rename(GtkWindow *window, GtkGridView *grid)
                                                    {
                                                        if (editor->editing == item)
                                                            close_editor(*editor, false);
-                                                       editor->bound.erase(G_FILE_INFO(gtk_list_item_get_item(item)));
                                                    }),
                      state);
 
@@ -203,8 +200,8 @@ void start_inline_rename(GtkGridView *grid, guint position)
     auto *model = G_LIST_MODEL(gtk_grid_view_get_model(grid));
     editor.requested.reset(G_FILE_INFO(g_list_model_get_item(model, position)));
     gtk_grid_view_scroll_to(grid, position, GTK_LIST_SCROLL_FOCUS, nullptr);
-    if (auto it = editor.bound.find(editor.requested.get()); it != editor.bound.end())
-        show_editor(editor, it->second);
+    if (auto *item = bound_item(grid, editor.requested.get()))
+        show_editor(editor, item);
 }
 
 bool cancel_inline_rename(GtkGridView *grid)

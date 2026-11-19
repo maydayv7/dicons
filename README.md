@@ -4,7 +4,7 @@
 
 ## Features
 
-- [x] Use XDG_USER_DIR for the Desktop directory
+- [x] Use `XDG_USER_DIR` for the Desktop directory
 - [x] Start default application for selected file
 - [x] Update icons when files are added, removed, renamed, or edited
 - [x] Drag and Drop files from/to the Desktop
@@ -13,6 +13,7 @@
 - [x] Right-click context menu, create Templates
 - [x] Sort icons by name, modification time, size, or file type
 - [x] Image and document thumbnails
+- [ ] Trash icon
 
 ### Keyboard shortcuts
 
@@ -62,4 +63,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/dicons
 cmake --install build --prefix "$HOME/.local"
+```
+
+Use a separate Debug build to run the GLib tests under ASAN, LSAN and UBSAN.
+
+```sh
+cmake -S . -B build/sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DDICONS_SANITIZERS=ON
+cmake --build build/sanitize
+ASAN_OPTIONS=detect_leaks=1 ctest --test-dir build/sanitize --output-on-failure
 ```

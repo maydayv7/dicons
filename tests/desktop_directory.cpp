@@ -260,6 +260,49 @@ static void symlink_targets()
         return info && g_file_info_get_icon(info.get()) && g_icon_equal(g_file_info_get_icon(info.get()), expected); }));
 }
 
+static void directory_burst()
+{
+    constexpr guint initial = 4000;
+    constexpr guint burst = 500;
+    const auto root = fs::path(g_get_user_data_dir()) / "Desktop";
+    fs::create_directories(root);
+    const auto path = [&](guint i)
+    { return root / (std::to_string(i) + ".txt"); };
+    for (guint i = 0; i < initial; ++i)
+        std::ofstream{path(i)};
+
+    ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
+    ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
+    g_test_timer_start();
+    DesktopDirectory directory{folder.get(), app.get()};
+    const auto await_count = [&](guint count)
+    {
+        bool expired = false;
+        guint timer = g_timeout_add_seconds(60, [](gpointer flag) -> gboolean
+                                            {
+            *static_cast<bool *>(flag) = true;
+            return G_SOURCE_CONTINUE; }, &expired);
+        while (!expired && g_list_model_get_n_items(directory.items.get()) != count)
+            g_main_context_iteration(nullptr, true);
+        g_source_remove(timer);
+        g_assert_false(expired);
+    };
+    await_count(initial);
+    g_test_message("Scan %u files: %.3f s", initial, g_test_timer_elapsed());
+
+    g_test_timer_start();
+    for (guint i = initial; i < initial + burst; ++i)
+        std::ofstream{path(i)};
+    await_count(initial + burst);
+    g_test_message("Create %u files and update model: %.3f s", burst, g_test_timer_elapsed());
+
+    g_test_timer_start();
+    for (guint i = 0; i < burst; ++i)
+        fs::remove(path(i * (initial / burst)));
+    await_count(initial);
+    g_test_message("Delete %u files and update model: %.3f s", burst, g_test_timer_elapsed());
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
@@ -269,5 +312,7 @@ int main(int argc, char **argv)
     g_test_add_func("/directory/sorted-directory", sorted_directory);
     g_test_add_func("/directory/launcher-order", launcher_order);
     g_test_add_func("/directory/symlink-targets", symlink_targets);
+    if (g_test_perf())
+        g_test_add_func("/directory/burst", directory_burst);
     return g_test_run();
 }

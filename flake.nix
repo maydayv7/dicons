@@ -41,6 +41,15 @@
       }
     );
 
+    checks = forLinux (system: {
+      sanitizers = self.packages.${system}.default.overrideAttrs (prev: {
+        name = "dicons-sanitizers";
+        cmakeBuildType = "Debug";
+        cmakeFlags = (prev.cmakeFlags or []) ++ ["-DDICONS_SANITIZERS=ON"];
+        dontStrip = true;
+      });
+    });
+
     devShells = forLinux (
       system: let
         pkgs = nixpkgs.legacyPackages.${system};

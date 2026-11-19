@@ -4,3 +4,4 @@
 
 struct DesktopDirectory;
 GtkGridView *create_icon_grid(const DesktopDirectory &directory, GtkApplication *app);
+GtkListItem *bound_item(GtkGridView *grid, GFileInfo *info);

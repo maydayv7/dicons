@@ -101,6 +101,9 @@ private:
             return;
         g_signal_handlers_disconnect_by_data(scan, self);
         self->scan_.reset();
+        // Subsequent monitor events can locate a row by basename
+        g_list_store_sort(self->entries.get(), [](gconstpointer a, gconstpointer b, gpointer)
+                          { return g_strcmp0(g_file_info_get_name(G_FILE_INFO(a)), g_file_info_get_name(G_FILE_INFO(b))); }, nullptr);
         self->read_next();
     }
 
@@ -183,10 +186,19 @@ private:
     void apply(GFile *file, GFileInfo *info)
     {
         auto *model = G_LIST_MODEL(entries.get());
-        for (guint i = 0; i < g_list_model_get_n_items(model); ++i)
+        g_autofree char *name = g_file_get_basename(file);
+        guint first = 0;
+        guint last = g_list_model_get_n_items(model);
+        while (first < last)
         {
+            const guint i = first + (last - first) / 2;
             ObjectPtr<GFileInfo> current{G_FILE_INFO(g_list_model_get_item(model, i))};
-            if (g_file_equal(item_file(current.get()), file))
+            const int cmp = g_strcmp0(g_file_info_get_name(current.get()), name);
+            if (cmp < 0)
+                first = i + 1;
+            else if (cmp > 0)
+                last = i;
+            else
             {
                 if (info)
                 {
@@ -204,7 +216,7 @@ private:
         if (info)
         {
             update_link_watch(info);
-            g_list_store_append(entries.get(), info);
+            g_list_store_insert(entries.get(), first, info);
         }
     }
 

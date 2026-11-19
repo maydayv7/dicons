@@ -12,8 +12,20 @@ pkg_check_modules(DICONS_DEPS REQUIRED IMPORTED_TARGET
     gio-unix-2.0>=2.74
 )
 
-add_executable(dicons
-    src/main.cpp
+if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
+    add_compile_options(-Wall -Wextra -Wpedantic -Wformat=2 -Wno-missing-field-initializers)
+endif()
+
+option(DICONS_SANITIZERS "Instrument dicons with ASAN and UBSAN" OFF)
+if(DICONS_SANITIZERS)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
+        message(FATAL_ERROR "DICONS_SANITIZERS requires GCC or Clang")
+    endif()
+    add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
+add_library(dicons-core STATIC
     src/desktop_directory.cpp
     src/desktop_item.cpp
     src/symlink.cpp
@@ -38,29 +50,23 @@ add_executable(dicons
     src/transfer.cpp
     src/copy.cpp
 )
-target_link_libraries(dicons PRIVATE PkgConfig::DICONS_DEPS)
+target_include_directories(dicons-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(dicons-core PUBLIC PkgConfig::DICONS_DEPS)
+
+add_executable(dicons src/main.cpp)
+target_link_libraries(dicons PRIVATE dicons-core)
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(test-copy tests/copy.cpp src/copy.cpp src/file_rename.cpp)
-    target_include_directories(test-copy PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(test-copy PRIVATE PkgConfig::DICONS_DEPS)
-    add_test(NAME desktop-copy COMMAND test-copy)
-
-    add_executable(test-rename tests/rename.cpp src/file_rename.cpp)
-    target_include_directories(test-rename PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(test-rename PRIVATE PkgConfig::DICONS_DEPS)
-    add_test(NAME desktop-rename COMMAND test-rename)
-
-    add_executable(test-directory tests/desktop_directory.cpp src/desktop_directory.cpp src/desktop_item.cpp src/symlink.cpp src/desktop_sort.cpp src/notifications.cpp)
-    target_include_directories(test-directory PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(test-directory PRIVATE PkgConfig::DICONS_DEPS)
-    add_test(NAME desktop-directory COMMAND test-directory)
-
-    add_executable(test-thumbnails tests/thumbnails.cpp src/thumbnail_cache.cpp src/thumbnailer.cpp src/desktop_item.cpp src/symlink.cpp)
-    target_include_directories(test-thumbnails PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(test-thumbnails PRIVATE PkgConfig::DICONS_DEPS)
-    add_test(NAME desktop-thumbnails COMMAND test-thumbnails)
+    function(dicons_test name source)
+        add_executable(test-${name} tests/${source})
+        target_link_libraries(test-${name} PRIVATE dicons-core)
+        add_test(NAME desktop-${name} COMMAND test-${name})
+    endfunction()
+    dicons_test(copy copy.cpp)
+    dicons_test(rename rename.cpp)
+    dicons_test(directory desktop_directory.cpp)
+    dicons_test(thumbnails thumbnails.cpp)
 endif()
 
 install(TARGETS dicons RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
