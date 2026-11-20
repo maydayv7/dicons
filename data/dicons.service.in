@@ -1,0 +1,16 @@
+[Unit]
+Description=Wayland Desktop Icons
+PartOf=@session_target@
+After=@session_target@
+ConditionEnvironment=WAYLAND_DISPLAY
+StartLimitIntervalSec=30
+StartLimitBurst=3
+
+[Service]
+Type=exec
+ExecStart="@dicons_executable@"
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=@session_target@

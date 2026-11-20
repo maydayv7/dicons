@@ -1,0 +1,9 @@
+BasedOnStyle: Microsoft
+AccessModifierOffset: -4
+NamespaceIndentation: All
+AllowShortFunctionsOnASingleLine: All
+BraceWrapping:
+  BeforeLambdaBody: true
+ColumnLimit: 0
+FixNamespaceComments: false
+SortIncludes: Never

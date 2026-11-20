@@ -32,17 +32,15 @@
 ## Configuration
 
 Preferences are stored in GSettings under `dev.maydayv7.dicons`.
+The following shows the defaults:
 
-On NixOS, enable `programs.dconf.enable = true;`. The following Home Manager example shows the defaults:
-
-```nix
-dconf.settings."dev/maydayv7/dicons" = {
-  show-trash = true;
-  show-thumbnails = true;
-  sort-field = "name"; # name/type/modified/size
-  sort-direction = "ascending"; # ascending/descending
-  folders-first = true;
-};
+```sh
+[dev/maydayv7/dicons]
+show-trash = true;
+show-thumbnails = true;
+sort-field = "name"; # name/type/modified/size
+sort-direction = "ascending"; # ascending/descending
+folders-first = true;
 ```
 
 **Show Hidden Items** and **Ctrl+H** apply only to the current session.
@@ -72,6 +70,28 @@ git clone https://github.com/maydayv7/dicons
 cd dicons
 nix build
 ./result/bin/dicons
+```
+
+### NixOS
+
+This repo includes a [Home Manager](https://github.com/nix-community/home-manager) module. On NixOS, add this to your configuration:
+
+```nix
+programs.dconf.enable = true;
+home-manager.sharedModules = [ inputs.dicons.homeManagerModules.default ];
+home-manager.users.<name>.services.dicons = {
+  enable = true;
+  settings.show-trash = false;
+};
+```
+
+### Standalone systemd user service
+
+The installed package includes `dicons.service`. From a supported Wayland session, enable it for the current user:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now dicons.service
 ```
 
 ### Development

@@ -1,47 +1,32 @@
 {
   description = "Wayland Desktop Icons";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs = {
     self,
     nixpkgs,
+    treefmt-nix,
   }: let
     forLinux = nixpkgs.lib.genAttrs ["x86_64-linux" "aarch64-linux"];
+    treefmt = forLinux (system: (treefmt-nix.lib.evalModule nixpkgs.legacyPackages.${system} ./nix/format.nix).config.build);
   in {
-    packages = forLinux (
-      system: let
-        pkgs = nixpkgs.legacyPackages.${system};
-      in {
-        default = pkgs.stdenv.mkDerivation {
-          name = "dicons";
-          src = self;
-          strictDeps = true;
-          doCheck = true;
+    homeManagerModules.default = import ./nix/home-manager.nix self;
 
-          nativeBuildInputs = [
-            pkgs.cmake
-            pkgs.ninja
-            pkgs.pkg-config
-            pkgs.wrapGAppsHook4
-          ];
+    packages = forLinux (system: {
+      default = nixpkgs.legacyPackages.${system}.callPackage ./nix/package.nix {};
+    });
 
-          buildInputs = [
-            pkgs.glib
-            pkgs.gtk4
-            pkgs.gtk4-layer-shell
-          ];
-
-          preFixup = ''
-            gappsWrapperArgs+=(--suffix PATH : "${pkgs.xdg-terminal-exec}/bin")
-          '';
-
-          meta.mainProgram = "dicons";
-        };
-      }
-    );
+    formatter = forLinux (system: treefmt.${system}.wrapper);
 
     checks = forLinux (system: {
+      format = treefmt.${system}.check self;
       sanitizers = self.packages.${system}.default.overrideAttrs (prev: {
         name = "dicons-sanitizers";
         cmakeBuildType = "Debug";
@@ -56,6 +41,7 @@
       in {
         default = pkgs.mkShell {
           inputsFrom = [self.packages.${system}.default];
+          packages = [self.formatter.${system}];
         };
       }
     );
