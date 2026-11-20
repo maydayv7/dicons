@@ -8,9 +8,9 @@ bool is_trash_icon(GFileInfo *info);
 class TrashIcon
 {
 public:
-    TrashIcon();
+    explicit TrashIcon(GSettings *preferences);
     ~TrashIcon();
-    ObjectPtr<GSimpleAction> visible{g_simple_action_new_stateful("show-trash", nullptr, g_variant_new_boolean(true))};
+    ObjectPtr<GAction> visible;
     ObjectPtr<GListStore> items{g_list_store_new(G_TYPE_FILE_INFO)};
 
 private:
@@ -21,7 +21,7 @@ private:
     bool dirty_{};
     ObjectPtr<GFile> location_;
     bool local_{};
-    static void visibility_changed(GSimpleAction *action, GParamSpec *, TrashIcon *self);
+    static void visibility_changed(GAction *action, GParamSpec *, TrashIcon *self);
     static void state_read(GObject *, GAsyncResult *result, gpointer data);
     void watch_local();
     void refresh();

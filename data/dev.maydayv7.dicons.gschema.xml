@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="dev.maydayv7.dicons" path="/dev/maydayv7/dicons/">
+    <key name="show-trash" type="b">
+      <default>true</default>
+      <summary>Show the Trash icon</summary>
+    </key>
+    <key name="show-thumbnails" type="b">
+      <default>true</default>
+      <summary>Show image and document thumbnails</summary>
+    </key>
+    <key name="sort-field" type="s">
+      <choices>
+        <choice value="name" />
+        <choice value="modified" />
+        <choice value="size" />
+        <choice value="type" />
+      </choices>
+      <default>'name'</default>
+      <summary>Field used to sort items</summary>
+    </key>
+    <key name="sort-direction" type="s">
+      <choices>
+        <choice value="ascending" />
+        <choice value="descending" />
+      </choices>
+      <default>'ascending'</default>
+      <summary>Direction of sort order</summary>
+    </key>
+    <key name="folders-first" type="b">
+      <default>true</default>
+      <summary>Sort folders before files</summary>
+    </key>
+  </schema>
+</schemalist>

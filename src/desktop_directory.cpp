@@ -232,8 +232,10 @@ private:
     }
 };
 
-DesktopDirectory::DesktopDirectory(GFile *location, GtkApplication *app)
-    : folder(retain(location)), staging(make_file_set()), updates_(std::make_shared<Updates>())
+DesktopDirectory::DesktopDirectory(GFile *location, GtkApplication *app, GSettings *preferences)
+    : folder(retain(location)), sorting(preferences), staging(make_file_set()),
+      show_thumbnails(g_settings_create_action(preferences, "show-thumbnails")), trash(preferences),
+      updates_(std::make_shared<Updates>())
 {
     g_autoptr(GError) error = nullptr;
     ObjectPtr<GFileMonitor> changes{g_file_monitor_directory(location, G_FILE_MONITOR_WATCH_MOVES, nullptr, &error)};

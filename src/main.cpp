@@ -1,5 +1,6 @@
 #include "desktop_directory.hpp"
 #include "desktop_windows.hpp"
+#include "preferences.hpp"
 
 #include <gtk4-layer-shell.h>
 #include <glib/gstdio.h>
@@ -53,7 +54,8 @@ namespace
             }
 
             ObjectPtr<GFile> folder{g_file_new_for_path(path)};
-            directory_.emplace(folder.get(), app_.get());
+            auto preferences = desktop_preferences();
+            directory_.emplace(folder.get(), app_.get(), preferences.get());
             auto *display = gdk_display_get_default();
             install_desktop_style(display);
             monitors_ = retain(gdk_display_get_monitors(display));
@@ -66,7 +68,7 @@ namespace
         int exit_status_{};
         std::optional<DesktopDirectory> directory_;
         ObjectPtr<GListModel> monitors_;
-        ObjectPtr<GtkApplication> app_{gtk_application_new("dev.maydayv7.dicons", G_APPLICATION_DEFAULT_FLAGS)};
+        ObjectPtr<GtkApplication> app_{gtk_application_new(desktop_app_id, G_APPLICATION_DEFAULT_FLAGS)};
     };
 }
 

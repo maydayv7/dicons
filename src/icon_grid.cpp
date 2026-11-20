@@ -76,7 +76,7 @@ static GdkContentProvider *prepare_drag(GtkDragSource *, double, double,
     return gdk_content_provider_new_for_value(&value);
 }
 
-static void setup_item(GtkListItemFactory *, GtkListItem *item, GSimpleAction *show_thumbnails)
+static void setup_item(GtkListItemFactory *, GtkListItem *item, GAction *show_thumbnails)
 {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     GtkWidget *image = create_item_icon(show_thumbnails);

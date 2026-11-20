@@ -14,6 +14,7 @@
 - [x] Sort icons by name, modification time, size, or file type
 - [x] Image and document thumbnails
 - [x] Trash icon
+- [ ] Clipboard copy and paste
 
 ### Keyboard shortcuts
 
@@ -27,6 +28,24 @@
 | F2                | Edit the filename. Enter or clicking away saves. Esc cancels. |
 | Delete            | Move all selected items to Trash                              |
 | Ctrl+Z            | Undo last Delete                                              |
+
+## Configuration
+
+Preferences are stored in GSettings under `dev.maydayv7.dicons`.
+
+On NixOS, enable `programs.dconf.enable = true;`. The following Home Manager example shows the defaults:
+
+```nix
+dconf.settings."dev/maydayv7/dicons" = {
+  show-trash = true;
+  show-thumbnails = true;
+  sort-field = "name"; # name/type/modified/size
+  sort-direction = "ascending"; # ascending/descending
+  folders-first = true;
+};
+```
+
+**Show Hidden Items** and **Ctrl+H** apply only to the current session.
 
 ## Supported Desktops
 

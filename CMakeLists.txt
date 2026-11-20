@@ -25,7 +25,21 @@ if(DICONS_SANITIZERS)
     add_link_options(-fsanitize=address,undefined)
 endif()
 
+find_program(GLIB_COMPILE_SCHEMAS glib-compile-schemas)
+if(NOT GLIB_COMPILE_SCHEMAS)
+    message(FATAL_ERROR "glib-compile-schemas is required to build dicons")
+endif()
+set(schema_name dev.maydayv7.dicons.gschema.xml)
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gschemas.compiled"
+    COMMAND "${GLIB_COMPILE_SCHEMAS}" --strict "--targetdir=${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/data"
+    DEPENDS "data/${schema_name}"
+    VERBATIM
+)
+add_custom_target(dicons-schemas DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/gschemas.compiled")
+
 add_library(dicons-core STATIC
+    src/preferences.cpp
     src/desktop_directory.cpp
     src/desktop_item.cpp
     src/symlink.cpp
@@ -53,6 +67,7 @@ add_library(dicons-core STATIC
     src/transfer.cpp
     src/copy.cpp
 )
+add_dependencies(dicons-core dicons-schemas)
 target_include_directories(dicons-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(dicons-core PUBLIC PkgConfig::DICONS_DEPS)
 
@@ -69,6 +84,7 @@ if(BUILD_TESTING)
     dicons_test(copy copy.cpp)
     dicons_test(rename rename.cpp)
     dicons_test(directory desktop_directory.cpp)
+    set_tests_properties(desktop-directory PROPERTIES ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
     dicons_test(thumbnails thumbnails.cpp)
     dicons_test(trash trash.cpp)
 endif()
@@ -76,3 +92,15 @@ endif()
 install(TARGETS dicons RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES dicons.desktop DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
 install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/dicons")
+set(schema_dir "${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas")
+install(FILES "data/${schema_name}" DESTINATION "${schema_dir}")
+if(NOT IS_ABSOLUTE "${schema_dir}")
+    set(schema_dir "\${CMAKE_INSTALL_PREFIX}/${schema_dir}")
+endif()
+install(CODE "
+    execute_process(COMMAND \"${GLIB_COMPILE_SCHEMAS}\" \"\$ENV{DESTDIR}${schema_dir}\"
+                    RESULT_VARIABLE status)
+    if(NOT status EQUAL 0)
+        message(FATAL_ERROR \"Could not compile installed GSettings schemas\")
+    endif()
+")

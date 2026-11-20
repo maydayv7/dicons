@@ -22,7 +22,7 @@ namespace
         GtkImage *base;
         GtkPicture *picture;
         GtkImage *badge;
-        ObjectPtr<GSimpleAction> enabled;
+        ObjectPtr<GAction> enabled;
         ObjectPtr<GFileInfo> item;
         std::shared_ptr<Preview> preview;
 
@@ -114,7 +114,7 @@ namespace
 
     void update_preview(Icon &icon)
     {
-        g_autoptr(GVariant) enabled = g_action_get_state(G_ACTION(icon.enabled.get()));
+        g_autoptr(GVariant) enabled = g_action_get_state(icon.enabled.get());
         std::shared_ptr<Preview> preview;
         if (icon.item && g_variant_get_boolean(enabled) && can_preview(icon.item.get()))
             preview = request(icon.item.get());
@@ -133,13 +133,13 @@ namespace
         return *static_cast<Icon *>(g_object_get_data(G_OBJECT(widget), "item-icon"));
     }
 
-    void preference_changed(GSimpleAction *, GParamSpec *, GtkWidget *widget)
+    void preference_changed(GAction *, GParamSpec *, GtkWidget *widget)
     {
         update_preview(icon_for(widget));
     }
 }
 
-GtkWidget *create_item_icon(GSimpleAction *show_thumbnails)
+GtkWidget *create_item_icon(GAction *show_thumbnails)
 {
     auto *overlay = gtk_overlay_new();
     auto *base = gtk_image_new();

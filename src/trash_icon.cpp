@@ -17,7 +17,8 @@ static void set_icon(GFileInfo *info, bool full)
     g_file_info_set_icon(info, icon.get());
 }
 
-TrashIcon::TrashIcon() : location_(g_file_new_for_uri("trash:///"))
+TrashIcon::TrashIcon(GSettings *preferences)
+    : visible(g_settings_create_action(preferences, "show-trash")), location_(g_file_new_for_uri("trash:///"))
 {
     g_file_info_set_name(info_.get(), "Trash");
     g_file_info_set_display_name(info_.get(), "Trash");
@@ -26,7 +27,7 @@ TrashIcon::TrashIcon() : location_(g_file_new_for_uri("trash:///"))
     g_file_info_set_attribute_boolean(info_.get(), "dicons::trash", true);
     g_file_info_set_attribute_object(info_.get(), "standard::file", G_OBJECT(location_.get()));
     set_icon(info_.get(), false);
-    g_list_store_append(items.get(), info_.get());
+    visibility_changed(visible.get(), nullptr, this);
     g_signal_connect(visible.get(), "notify::state", G_CALLBACK(visibility_changed), this);
 
     monitor_.reset(g_file_monitor_directory(location_.get(), G_FILE_MONITOR_NONE, nullptr, nullptr));
@@ -44,9 +45,9 @@ TrashIcon::TrashIcon() : location_(g_file_new_for_uri("trash:///"))
     refresh();
 }
 
-void TrashIcon::visibility_changed(GSimpleAction *action, GParamSpec *, TrashIcon *self)
+void TrashIcon::visibility_changed(GAction *action, GParamSpec *, TrashIcon *self)
 {
-    g_autoptr(GVariant) state = g_action_get_state(G_ACTION(action));
+    g_autoptr(GVariant) state = g_action_get_state(action);
     if (!g_variant_get_boolean(state))
         g_list_store_remove_all(self->items.get());
     else if (!g_list_model_get_n_items(G_LIST_MODEL(self->items.get())))

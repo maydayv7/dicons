@@ -85,42 +85,66 @@ static int compare_items(gconstpointer left, gconstpointer right, gpointer data)
     return order.field == Field::name && order.descending ? -sign : sign;
 }
 
-static void sort_changed(GActionGroup *actions, const char *name, GVariant *, GtkCustomSorter *sorter)
+static void sort_changed(GSettings *preferences, const char *, GtkCustomSorter *sorter)
 {
-    g_autoptr(GVariant) field = g_action_group_get_action_state(actions, "field");
-    g_autoptr(GVariant) direction = g_action_group_get_action_state(actions, "direction");
-    std::string_view field_id = g_variant_get_string(field, nullptr);
-    bool descending = std::string_view{g_variant_get_string(direction, nullptr)} == "descending";
-    if (std::string_view{name} == "field" && descending != (field_id == "modified"))
-    {
-        const char *initial = field_id == "modified" ? "descending" : "ascending";
-        g_action_group_change_action_state(actions, "direction", g_variant_new_string(initial));
-        return;
-    }
-
-    g_autoptr(GVariant) folders = g_action_group_get_action_state(actions, "folders-first");
+    g_autofree char *field = g_settings_get_string(preferences, "sort-field");
+    g_autofree char *direction = g_settings_get_string(preferences, "sort-direction");
     auto *order = new Order;
     for (const auto &choice : fields)
-        if (field_id == choice.id)
+        if (std::string_view{field} == choice.id)
             order->field = choice.field;
-    order->descending = descending;
-    order->folders_first = g_variant_get_boolean(folders);
+    order->descending = std::string_view{direction} == "descending";
+    order->folders_first = g_settings_get_boolean(preferences, "folders-first");
     gtk_custom_sorter_set_sort_func(sorter, compare_items, order, [](gpointer p)
                                     { delete static_cast<Order *>(p); });
 }
 
-DesktopSort::DesktopSort()
-    : actions(g_simple_action_group_new()),
-      sorter(gtk_custom_sorter_new(compare_items, new Order, [](gpointer p)
-                                   { delete static_cast<Order *>(p); }))
+static void sync_field(GSettings *preferences, const char *, GSimpleAction *field)
 {
-    const GActionEntry entries[] = {
-        {"field", nullptr, "s", "'name'"},
-        {"direction", nullptr, "s", "'ascending'"},
-        {"folders-first", nullptr, nullptr, "true"},
-    };
-    g_action_map_add_action_entries(G_ACTION_MAP(actions.get()), entries, G_N_ELEMENTS(entries), nullptr);
-    g_signal_connect_object(actions.get(), "action-state-changed", G_CALLBACK(sort_changed), sorter.get(), GConnectFlags{});
+    g_autoptr(GVariant) value = g_settings_get_value(preferences, "sort-field");
+    g_simple_action_set_state(field, value);
+}
+
+static void choose_field(GSimpleAction *action, GVariant *value, GSettings *preferences)
+{
+    g_autoptr(GVariant) current = g_action_get_state(G_ACTION(action));
+    if (g_variant_equal(current, value))
+        return;
+
+    g_autoptr(GSettingsSchema) schema = nullptr;
+    GSettingsBackend *backend = nullptr;
+    g_object_get(preferences, "settings-schema", &schema, "backend", &backend, nullptr);
+    ObjectPtr<GSettings> edit{g_settings_new_full(schema, backend, nullptr)};
+    g_object_unref(backend);
+    g_settings_delay(edit.get());
+    if (!g_settings_set_value(edit.get(), "sort-field", value))
+        return;
+    if (g_settings_is_writable(edit.get(), "sort-direction"))
+    {
+        bool newest_first = std::string_view{g_variant_get_string(value, nullptr)} == "modified";
+        g_settings_set_string(edit.get(), "sort-direction", newest_first ? "descending" : "ascending");
+    }
+    g_settings_apply(edit.get());
+}
+
+DesktopSort::DesktopSort(GSettings *preferences)
+    : actions(g_simple_action_group_new()), sorter(gtk_custom_sorter_new(nullptr, nullptr, nullptr))
+{
+    g_autoptr(GVariant) initial = g_settings_get_value(preferences, "sort-field");
+    ObjectPtr<GSimpleAction> field{g_simple_action_new_stateful("field", G_VARIANT_TYPE_STRING, initial)};
+    g_settings_bind_writable(preferences, "sort-field", field.get(), "enabled", false);
+    g_signal_connect_object(field.get(), "change-state", G_CALLBACK(choose_field), preferences, GConnectFlags{});
+    g_signal_connect_object(preferences, "changed::sort-field", G_CALLBACK(sync_field), field.get(), GConnectFlags{});
+    g_action_map_add_action(G_ACTION_MAP(actions.get()), G_ACTION(field.get()));
+    for (const char *key : {"sort-direction", "folders-first"})
+    {
+        ObjectPtr<GAction> action{g_settings_create_action(preferences, key)};
+        g_action_map_add_action(G_ACTION_MAP(actions.get()), action.get());
+    }
+
+    for (const char *signal : {"changed::sort-field", "changed::sort-direction", "changed::folders-first"})
+        g_signal_connect_object(preferences, signal, G_CALLBACK(sort_changed), sorter.get(), GConnectFlags{});
+    sort_changed(preferences, nullptr, sorter.get());
 }
 
 void append_sort_menu(GMenu *menu)
@@ -133,8 +157,8 @@ void append_sort_menu(GMenu *menu)
         g_menu_append_item(sorting, item);
     }
     g_autoptr(GMenu) direction = g_menu_new();
-    g_menu_append(direction, "Ascending", "sort.direction::ascending");
-    g_menu_append(direction, "Descending", "sort.direction::descending");
+    g_menu_append(direction, "Ascending", "sort.sort-direction::ascending");
+    g_menu_append(direction, "Descending", "sort.sort-direction::descending");
     g_menu_append_section(sorting, nullptr, G_MENU_MODEL(direction));
     g_autoptr(GMenu) grouping = g_menu_new();
     g_menu_append(grouping, "Folders First", "sort.folders-first");

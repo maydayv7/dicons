@@ -12,14 +12,14 @@ GFile *item_file(GFileInfo *info);
 
 struct DesktopDirectory
 {
-    DesktopDirectory(GFile *folder, GtkApplication *app);
+    DesktopDirectory(GFile *folder, GtkApplication *app, GSettings *preferences);
 
     ObjectPtr<GFile> folder;
     GListModel *entries() const;
     DesktopSort sorting;
     FileSet staging;
     ObjectPtr<GSimpleAction> show_hidden;
-    ObjectPtr<GSimpleAction> show_thumbnails{g_simple_action_new_stateful("show-thumbnails", nullptr, g_variant_new_boolean(true))};
+    ObjectPtr<GAction> show_thumbnails;
     TrashIcon trash;
     ObjectPtr<GListModel> items;
 

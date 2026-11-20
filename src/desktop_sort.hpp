@@ -5,7 +5,7 @@
 
 struct DesktopSort
 {
-    DesktopSort();
+    explicit DesktopSort(GSettings *preferences);
 
     ObjectPtr<GSimpleActionGroup> actions;
     ObjectPtr<GtkCustomSorter> sorter;
