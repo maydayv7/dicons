@@ -1,0 +1,40 @@
+window.dicons,
+window.dicons scrolledwindow,
+window.dicons gridview {
+  background: transparent;
+}
+
+window.dicons gridview {
+  padding: 0;
+  border-spacing: 0;
+}
+
+window.dicons gridview > child {
+  background: transparent;
+  box-shadow: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  outline: none;
+}
+
+window.dicons .desktop-cell {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+window.dicons .desktop-tile {
+  padding: 3px 5px;
+  margin-top: 1px;
+  border-radius: 6px;
+}
+
+window.dicons gridview > child:selected .desktop-tile {
+  background-color: alpha(@theme_selected_bg_color, 0.6);
+  color: @theme_selected_fg_color;
+}
+
+window.dicons gridview > child:focus-visible .desktop-tile {
+  outline: 2px solid currentColor;
+}

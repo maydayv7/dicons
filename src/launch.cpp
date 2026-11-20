@@ -25,7 +25,7 @@ void open_item(GtkGridView *grid, guint position, GtkApplication *app)
 {
     auto *model = G_LIST_MODEL(gtk_grid_view_get_model(grid));
     g_autoptr(GFileInfo) item = static_cast<GFileInfo *>(g_list_model_get_item(model, position));
-    if (!item)
+    if (!item || !item_file(item))
         return;
     GFile *file = item_file(item);
     GdkDisplay *display = gtk_widget_get_display(GTK_WIDGET(grid));

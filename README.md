@@ -8,6 +8,7 @@
 - [x] Start default application for selected file
 - [x] Update icons when files are added, removed, renamed, or edited
 - [x] Drag and Drop files from/to the Desktop
+- [x] Drag icons or a selection to free grid cells
 - [x] Mirror on connected monitors
 - [x] Rename files and move to Trash
 - [x] Right-click context menu, create Templates
@@ -21,35 +22,31 @@
 | Key               | Action                                                        |
 | ----------------- | ------------------------------------------------------------- |
 | Enter             | Open the focused icon                                         |
-| Menu or Shift+F10 | Open the context menu for focused icon or desktop             |
-| Ctrl+H            | Toggle hidden items on all monitors                           |
-| Ctrl+A            | Select all icons                                              |
+| Menu or Shift F10 | Open the context menu for focused icon or desktop             |
+| Ctrl H            | Toggle hidden items on all monitors                           |
+| Ctrl + or Ctrl =  | Increase icon size (also Ctrl + scroll up)                    |
+| Ctrl -            | Decrease icon size (also Ctrl + scroll down)                  |
+| Ctrl A            | Select all icons                                              |
 | Esc               | Clear the selection                                           |
 | F2                | Edit the filename. Enter or clicking away saves. Esc cancels. |
 | Delete            | Move all selected items to Trash                              |
-| Ctrl+Z            | Undo last Delete                                              |
-
-## Configuration
-
-Preferences are stored in GSettings under `dev.maydayv7.dicons`.
-The following shows the defaults:
-
-```sh
-[dev/maydayv7/dicons]
-show-trash = true;
-show-thumbnails = true;
-sort-field = "name"; # name/type/modified/size
-sort-direction = "ascending"; # ascending/descending
-folders-first = true;
-```
-
-**Show Hidden Items** and **Ctrl+H** apply only to the current session.
+| Ctrl Z            | Undo last Delete                                              |
 
 ## Supported Desktops
 
 > See [GTK4 Layer Shell](https://github.com/wmww/gtk4-layer-shell)
 
 Exclusively tested on Hyprland, but should be compatible with any `wlroots` based compositors.
+
+### Layer order
+
+The icons use the Wayland bottom layer with the namespace `dicons`.
+They may be hidden by your wallpaper program due to ordering, so you might have to add a layer rule like so (following example is for Hyprland):
+
+```lua
+hl.layer_rule({ match = { namespace = "^noctalia-wallpaper$" }, order = 1 })
+hl.layer_rule({ match = { namespace = "^dicons$" }, order = 0 })
+```
 
 ## Getting Started
 
@@ -68,8 +65,7 @@ Exclusively tested on Hyprland, but should be compatible with any `wlroots` base
 ```sh
 git clone https://github.com/maydayv7/dicons
 cd dicons
-nix build
-./result/bin/dicons
+# TODO
 ```
 
 ### NixOS
@@ -94,7 +90,49 @@ systemctl --user daemon-reload
 systemctl --user enable --now dicons.service
 ```
 
-### Development
+## Configuration
+
+Preferences are stored in GSettings under `dev.maydayv7.dicons`.
+The following shows the defaults:
+
+```ini
+[dev/maydayv7/dicons]
+folders-first=true
+icon-size=48  # 24-128
+show-trash=true
+show-thumbnails=true
+sort-field='name'  # name/type/modified/size
+sort-direction='ascending'  # ascending/descending
+```
+
+**Show Hidden Items** and **Ctrl+H** apply only to the current session.
+
+### Settings without dconf
+
+If dconf or its session service is unavailable at startup, preferences are read from `$XDG_CONFIG_HOME/dicons/settings.ini`.
+To use this file explicitly, start `dicons` with `GSETTINGS_BACKEND=keyfile`.
+
+```ini
+[desktop]
+icon-size=48
+show-trash=true
+```
+
+### Custom styling
+
+Create `style.css` in the same configuration directory and add the GTK CSS rules you want to override.
+For example, this rule gives selected icons a fainter highlight:
+
+```css
+window.dicons gridview > child:selected .desktop-tile {
+  background-color: alpha(@theme_selected_bg_color, 0.35);
+}
+```
+
+The [default stylesheet](data/style.css) contains other selectors.
+Restart `dicons` to apply changes.
+
+## Development
 
 Run `nix develop` to enter the development shell.
 

@@ -12,7 +12,7 @@ std::vector<GFile *> selected_files(GtkSelectionModel *selection)
          valid; valid = gtk_bitset_iter_next(&iter, &position))
     {
         ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(G_LIST_MODEL(selection), position))};
-        if (!is_trash_icon(info.get()))
+        if (item_file(info.get()) && !is_trash_icon(info.get()))
             files.push_back(item_file(info.get()));
     }
     return files;
@@ -35,7 +35,7 @@ static void select_arrivals(GListModel *model, guint first, guint, guint added, 
     {
         ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(model, i))};
         GFile *file = item_file(info.get());
-        if (!g_hash_table_remove(pending->files.get(), file))
+        if (!file || !g_hash_table_remove(pending->files.get(), file))
             continue;
         bool rename = pending->rename && g_file_equal(pending->rename.get(), file);
         gtk_selection_model_select_item(GTK_SELECTION_MODEL(model), i, rename);

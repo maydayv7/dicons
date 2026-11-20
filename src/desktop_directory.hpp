@@ -16,6 +16,7 @@ struct DesktopDirectory
 
     ObjectPtr<GFile> folder;
     GListModel *entries() const;
+    ObjectPtr<GSettings> preferences;
     DesktopSort sorting;
     FileSet staging;
     ObjectPtr<GSimpleAction> show_hidden;

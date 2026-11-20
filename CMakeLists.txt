@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(dicons LANGUAGES CXX)
+project(dicons LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -43,6 +43,7 @@ add_library(
     src/symlink.cpp
     src/desktop_sort.cpp
     src/desktop_windows.cpp
+    src/grid_layout.cpp
     src/icon_grid.cpp
     src/item_icon.cpp
     src/thumbnail_cache.cpp
@@ -69,7 +70,18 @@ add_dependencies(dicons-core dicons-schemas)
 target_include_directories(dicons-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(dicons-core PUBLIC PkgConfig::DICONS_DEPS)
 
-add_executable(dicons src/main.cpp)
+find_program(GLIB_COMPILE_RESOURCES glib-compile-resources)
+if(NOT GLIB_COMPILE_RESOURCES)
+    message(FATAL_ERROR "glib-compile-resources is required to build dicons")
+endif()
+add_custom_command(
+    OUTPUT dicons-resources.c
+    COMMAND "${GLIB_COMPILE_RESOURCES}" --generate-source "--target=${CMAKE_CURRENT_BINARY_DIR}/dicons-resources.c"
+            "--sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data" "${CMAKE_CURRENT_SOURCE_DIR}/data/dicons.gresource.xml"
+    DEPENDS data/dicons.gresource.xml data/style.css
+    VERBATIM
+)
+add_executable(dicons src/main.cpp dicons-resources.c)
 target_link_libraries(dicons PRIVATE dicons-core)
 
 include(CTest)

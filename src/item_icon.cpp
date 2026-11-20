@@ -139,17 +139,23 @@ namespace
     }
 }
 
-GtkWidget *create_item_icon(GAction *show_thumbnails)
+static void size_changed(GSettings *preferences, const char *, GtkWidget *widget)
+{
+    auto &icon = icon_for(widget);
+    int size = g_settings_get_int(preferences, "icon-size");
+    gtk_image_set_pixel_size(icon.base, size);
+    gtk_widget_set_size_request(GTK_WIDGET(icon.base), size, size);
+    gtk_image_set_pixel_size(icon.badge, size / 3);
+}
+
+GtkWidget *create_item_icon(GAction *show_thumbnails, GSettings *preferences)
 {
     auto *overlay = gtk_overlay_new();
     auto *base = gtk_image_new();
     auto *picture = gtk_picture_new();
     auto *badge = gtk_image_new_from_icon_name("emblem-symbolic-link");
-    gtk_image_set_pixel_size(GTK_IMAGE(base), 48);
-    gtk_widget_set_size_request(base, 48, 48);
     gtk_widget_set_halign(overlay, GTK_ALIGN_CENTER);
     gtk_picture_set_content_fit(GTK_PICTURE(picture), GTK_CONTENT_FIT_CONTAIN);
-    gtk_image_set_pixel_size(GTK_IMAGE(badge), 16);
     gtk_widget_set_halign(badge, GTK_ALIGN_START);
     gtk_widget_set_valign(badge, GTK_ALIGN_END);
     gtk_overlay_set_child(GTK_OVERLAY(overlay), base);
@@ -159,6 +165,8 @@ GtkWidget *create_item_icon(GAction *show_thumbnails)
     g_object_set_data_full(G_OBJECT(overlay), "item-icon", icon, [](gpointer p)
                            { delete static_cast<Icon *>(p); });
     g_signal_connect_object(show_thumbnails, "notify::state", G_CALLBACK(preference_changed), overlay, GConnectFlags{});
+    size_changed(preferences, nullptr, overlay);
+    g_signal_connect_object(preferences, "changed::icon-size", G_CALLBACK(size_changed), overlay, GConnectFlags{});
     return overlay;
 }
 

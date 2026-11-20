@@ -2,6 +2,7 @@
 #include "desktop_item.hpp"
 #include "notifications.hpp"
 #include "symlink.hpp"
+#include "grid_layout.hpp"
 
 #include <deque>
 
@@ -45,9 +46,10 @@ class DesktopDirectory::Updates : public std::enable_shared_from_this<Updates>
 public:
     ObjectPtr<GListStore> entries{g_list_store_new(G_TYPE_FILE_INFO)};
 
-    void start(GFile *folder, GFileMonitor *monitor, GtkApplication *app)
+    void start(GFile *folder, GFileMonitor *monitor, GtkApplication *app, GSettings *settings)
     {
         folder_ = retain(folder);
+        settings_ = retain(settings);
         if (monitor)
         {
             monitor_ = retain(monitor);
@@ -76,6 +78,7 @@ private:
                                        "time::modified,time::modified-nsec";
     ObjectPtr<GtkDirectoryList> scan_;
     ObjectPtr<GFile> folder_;
+    ObjectPtr<GSettings> settings_;
     ObjectPtr<GFileMonitor> monitor_;
     std::deque<ObjectPtr<GFile>> pending_;
     FileSet queued_ = make_file_set();
@@ -113,6 +116,7 @@ private:
         switch (event)
         {
         case G_FILE_MONITOR_EVENT_RENAMED:
+            relocate_position(self->settings_.get(), file, other);
             self->queue(file);
             self->queue(other);
             break;
@@ -209,7 +213,10 @@ private:
                     g_list_store_splice(entries.get(), i, 1, &item, 1);
                 }
                 else
+                {
+                    relocate_position(settings_.get(), file, nullptr);
                     g_list_store_remove(entries.get(), i);
+                }
                 return;
             }
         }
@@ -233,7 +240,7 @@ private:
 };
 
 DesktopDirectory::DesktopDirectory(GFile *location, GtkApplication *app, GSettings *preferences)
-    : folder(retain(location)), sorting(preferences), staging(make_file_set()),
+    : folder(retain(location)), preferences(retain(preferences)), sorting(preferences), staging(make_file_set()),
       show_thumbnails(g_settings_create_action(preferences, "show-thumbnails")), trash(preferences),
       updates_(std::make_shared<Updates>())
 {
@@ -255,7 +262,7 @@ DesktopDirectory::DesktopDirectory(GFile *location, GtkApplication *app, GSettin
     g_list_store_append(sections, trash.items.get());
     g_list_store_append(sections, sorted.get());
     items.reset(G_LIST_MODEL(gtk_flatten_list_model_new(G_LIST_MODEL(sections))));
-    updates_->start(location, changes.get(), app);
+    updates_->start(location, changes.get(), app, preferences);
 }
 
 GListModel *DesktopDirectory::entries() const

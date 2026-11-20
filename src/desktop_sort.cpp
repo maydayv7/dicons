@@ -85,8 +85,10 @@ static int compare_items(gconstpointer left, gconstpointer right, gpointer data)
     return order.field == Field::name && order.descending ? -sign : sign;
 }
 
-static void sort_changed(GSettings *preferences, const char *, GtkCustomSorter *sorter)
+static void sort_changed(GSettings *preferences, const char *key, GtkCustomSorter *sorter)
 {
+    if (key)
+        g_settings_reset(preferences, "icon-positions");
     g_autofree char *field = g_settings_get_string(preferences, "sort-field");
     g_autofree char *direction = g_settings_get_string(preferences, "sort-direction");
     auto *order = new Order;
@@ -107,6 +109,7 @@ static void sync_field(GSettings *preferences, const char *, GSimpleAction *fiel
 
 static void choose_field(GSimpleAction *action, GVariant *value, GSettings *preferences)
 {
+    g_settings_reset(preferences, "icon-positions");
     g_autoptr(GVariant) current = g_action_get_state(G_ACTION(action));
     if (g_variant_equal(current, value))
         return;

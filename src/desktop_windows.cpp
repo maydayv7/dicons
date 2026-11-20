@@ -44,9 +44,9 @@ static void add_window(GtkApplication *app, const DesktopDirectory &directory, G
 
     auto *grid = create_icon_grid(directory, app);
     GtkWidget *scroll = gtk_scrolled_window_new();
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), GTK_WIDGET(grid));
+    attach_grid_viewport(GTK_SCROLLED_WINDOW(scroll), grid);
     gtk_window_set_child(window, desktop_overlay(scroll));
-    attach_desktop_keys(window, grid);
+    attach_desktop_keys(window, grid, directory.preferences.get());
     attach_context_menu(window, grid, directory);
     transfer_attach(window, grid, directory.folder.get(), directory.staging.get());
     gtk_window_present(window);
@@ -81,10 +81,17 @@ void sync_windows(GtkApplication *app, GListModel *monitors, const DesktopDirect
 void install_desktop_style(GdkDisplay *display)
 {
     g_autoptr(GtkCssProvider) css = gtk_css_provider_new();
-    const char *style = "window.dicons, window.dicons scrolledwindow, window.dicons gridview {"
-                        " background: transparent; }";
-    gtk_css_provider_load_from_string(css, style);
-    // Desktop surfaces must stay transparent
-    gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(css),
-                                               GTK_STYLE_PROVIDER_PRIORITY_USER + 1);
+    gtk_css_provider_load_from_resource(css, "/dev/maydayv7/dicons/style.css");
+
+    // Keep the desktop transparent
+    constexpr guint priority = GTK_STYLE_PROVIDER_PRIORITY_USER + 1;
+    gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(css), priority);
+
+    g_autofree char *path = g_build_filename(g_get_user_config_dir(), "dicons", "style.css", nullptr);
+    if (g_file_test(path, G_FILE_TEST_IS_REGULAR))
+    {
+        g_autoptr(GtkCssProvider) custom = gtk_css_provider_new();
+        gtk_css_provider_load_from_path(custom, path);
+        gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(custom), priority + 1);
+    }
 }

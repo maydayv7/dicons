@@ -137,8 +137,7 @@ static void files_received(GObject *source, GAsyncResult *result, gpointer data)
     }
     if (transfer->to_trash)
     {
-        auto *drag = gdk_drop_get_drag(drop);
-        auto *origin = drag ? static_cast<GtkGridView *>(g_object_get_data(G_OBJECT(drag), "dicons-origin")) : nullptr;
+        auto *origin = drag_origin(drop);
         auto *grid = origin && gtk_widget_get_root(GTK_WIDGET(origin)) ? origin : transfer->grid.get();
         if (!gtk_widget_get_root(GTK_WIDGET(grid)))
         {
@@ -168,20 +167,21 @@ static void files_received(GObject *source, GAsyncResult *result, gpointer data)
 
 static gboolean accepts_files(GtkDropTargetAsync *target, GdkDrop *drop, gpointer)
 {
-    return gdk_content_formats_match(gtk_drop_target_async_get_formats(target), gdk_drop_get_formats(drop));
+    return drag_origin(drop) || gdk_content_formats_match(gtk_drop_target_async_get_formats(target), gdk_drop_get_formats(drop));
 }
 
 static bool over_trash(GtkDropTargetAsync *target, double x, double y, GtkGridView *grid)
 {
     auto *window = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(target));
-    auto *item = target_item(gtk_widget_pick(window, x, y, GTK_PICK_DEFAULT), grid);
-    return item && gtk_list_item_get_item(item) && is_trash_icon(G_FILE_INFO(gtk_list_item_get_item(item)));
+    auto *picked = gtk_widget_pick(window, x, y, GTK_PICK_DEFAULT);
+    auto *item = target_item(picked, grid);
+    return item && (picked == tile_content(item) || gtk_widget_is_ancestor(picked, tile_content(item))) &&
+           is_trash_icon(G_FILE_INFO(gtk_list_item_get_item(item)));
 }
 
 static GdkDragAction drop_action(GtkDropTargetAsync *target, GdkDrop *drop, double x, double y, GtkGridView *grid)
 {
-    auto *drag = gdk_drop_get_drag(drop);
-    bool ours = drag && g_object_get_data(G_OBJECT(drag), "dicons-origin");
+    bool ours = drag_origin(drop) != nullptr;
     if (!ours && over_trash(target, x, y, grid))
         return GdkDragAction(gdk_drop_get_actions(drop) & GDK_ACTION_MOVE);
     return GDK_ACTION_COPY;
@@ -192,13 +192,20 @@ static gboolean accept_drop(GtkDropTargetAsync *target, GdkDrop *drop, double x,
     if (!drop_action(target, drop, x, y, grid))
         return false;
     GtkWindow *window = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(grid)));
+    bool to_trash = over_trash(target, x, y, grid);
+    if (drag_origin(drop) && (!to_trash || dragging_trash(drop)))
+    {
+        bool moved = move_icons(drop, grid, GTK_WIDGET(window), x, y);
+        gdk_drop_finish(drop, moved ? GDK_ACTION_COPY : GdkDragAction{});
+        return true;
+    }
     auto *selection = gtk_grid_view_get_model(grid);
     auto *site = static_cast<DropSite *>(g_object_get_data(G_OBJECT(selection), "drop-site"));
     auto *transfer = new Transfer{
         .grid = retain(grid),
         .app = retain(G_APPLICATION(gtk_window_get_application(window))),
         .site = *site,
-        .to_trash = over_trash(target, x, y, grid),
+        .to_trash = to_trash,
     };
     gdk_drop_read_value_async(drop, GDK_TYPE_FILE_LIST, G_PRIORITY_DEFAULT, nullptr, files_received, transfer);
     return TRUE;

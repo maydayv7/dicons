@@ -1,5 +1,6 @@
 #include "desktop_directory.hpp"
 #include "preferences.hpp"
+#include "grid_layout.hpp"
 
 #define G_SETTINGS_ENABLE_BACKEND
 #include <gio/gsettingsbackend.h>
@@ -17,6 +18,33 @@ static ObjectPtr<GSettings> test_preferences()
 {
     ObjectPtr<GSettingsBackend> backend{g_memory_settings_backend_new()};
     return desktop_preferences(backend.get());
+}
+
+static void settings_without_dconf()
+{
+    if (!g_test_subprocess())
+    {
+        g_test_trap_subprocess(nullptr, 5 * G_TIME_SPAN_SECOND, G_TEST_SUBPROCESS_DEFAULT);
+        g_test_trap_assert_passed();
+        return;
+    }
+    g_unsetenv("GSETTINGS_BACKEND");
+    g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/dicons-test-bus", true);
+    auto path = fs::path(g_get_user_config_dir()) / "dicons" / "settings.ini";
+    auto settings = desktop_preferences();
+    g_assert_true(g_settings_set_int(settings.get(), "icon-size", 72));
+    g_settings_sync();
+    g_autoptr(GKeyFile) ini = g_key_file_new();
+    g_assert_true(g_key_file_load_from_file(ini, path.c_str(), G_KEY_FILE_NONE, nullptr));
+    g_assert_cmpint(g_key_file_get_integer(ini, "desktop", "icon-size", nullptr), ==, 72);
+    settings.reset();
+
+    std::ofstream(path) << "[desktop]\nicon-size=32\nshow-trash=false\nsort-field='size'\n";
+    settings = desktop_preferences();
+    g_assert_cmpint(g_settings_get_int(settings.get(), "icon-size"), ==, 32);
+    g_assert_false(g_settings_get_boolean(settings.get(), "show-trash"));
+    g_autofree char *field = g_settings_get_string(settings.get(), "sort-field");
+    g_assert_cmpstr(field, ==, "size");
 }
 
 static guint position_of(GListModel *model, std::string_view name)
@@ -97,6 +125,63 @@ static void stored_preferences()
     g_assert_false(checked(G_ACTION(reopened.show_hidden.get())));
     g_assert_true(wait_for([&]
                            { return position_of(reopened.items.get(), "older.txt") == 1; }));
+}
+
+static void manual_layout()
+{
+    auto root = fs::path(g_get_user_data_dir()) / "Desktop";
+    fs::create_directories(root);
+    std::ofstream(root / "a");
+    std::ofstream(root / "b");
+    ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
+    ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
+    auto preferences = test_preferences();
+    DesktopDirectory directory{folder.get(), app.get(), preferences.get()};
+    GridLayout layout(directory.items.get(), preferences.get());
+    layout.resize(5, 4);
+    auto *slots = G_LIST_MODEL(layout.slots.get());
+    g_assert_true(wait_for([&]
+                           { return g_list_model_get_n_items(slots) == 3; }));
+    const auto uri = [&](const char *name)
+    {
+        ObjectPtr<GFile> file{g_file_get_child(folder.get(), name)};
+        g_autofree char *text = g_file_get_uri(file.get());
+        return std::string{text};
+    };
+    auto at = [&](guint i)
+    {
+        ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(slots, i))};
+        auto *name = info && item_file(info.get()) ? g_file_info_get_name(info.get()) : nullptr;
+        return std::string{name ? name : ""};
+    };
+
+    ObjectPtr<GtkMultiSelection> selection{gtk_multi_selection_new(g_object_ref(slots))};
+    gtk_selection_model_select_item(GTK_SELECTION_MODEL(selection.get()), 1, true);
+    g_assert_true(layout.move({uri("a"), uri("b")}, 12));
+    g_assert_true(at(0) == "Trash" && at(1).empty() && at(12) == "a" && at(13) == "b");
+    g_assert_true(gtk_selection_model_is_selected(GTK_SELECTION_MODEL(selection.get()), 12));
+    g_assert_false(layout.move({uri("a")}, 13));
+    g_assert_false(layout.move({uri("a"), uri("b")}, 14));
+    g_assert_true(at(12) == "a" && at(13) == "b");
+
+    fs::rename(root / "a", root / "renamed");
+    g_assert_true(wait_for([&]
+                           { return at(12) == "renamed"; }));
+    GridLayout mirror(directory.items.get(), preferences.get());
+    mirror.resize(5, 4);
+    ObjectPtr<GFileInfo> mirrored{G_FILE_INFO(g_list_model_get_item(G_LIST_MODEL(mirror.slots.get()), 12))};
+    g_assert_cmpstr(g_file_info_get_name(mirrored.get()), ==, "renamed");
+    layout.resize(2, 2);
+    g_assert_cmpuint(g_list_model_get_n_items(slots), ==, 3);
+    layout.resize(5, 4);
+    g_assert_true(at(12) == "renamed" && at(13) == "b");
+    fs::remove(root / "renamed");
+    g_assert_true(wait_for([&]
+                           { return at(12).empty(); }));
+    g_assert_false(read_positions(preferences.get()).contains(uri("renamed")));
+    g_action_group_activate_action(G_ACTION_GROUP(directory.sorting.actions.get()), "field", g_variant_new_string("name"));
+    g_assert_true(at(0) == "Trash" && at(1) == "b");
+    g_assert_cmpuint(g_list_model_get_n_items(slots), ==, 2);
 }
 
 static void pinned_trash()
@@ -422,6 +507,8 @@ int main(int argc, char **argv)
     g_setenv("GIO_USE_VFS", "local", true);
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
     g_test_add_func("/directory/stored-preferences", stored_preferences);
+    g_test_add_func("/directory/settings-without-dconf", settings_without_dconf);
+    g_test_add_func("/directory/manual-layout", manual_layout);
     g_test_add_func("/directory/pinned-trash", pinned_trash);
     g_test_add_func("/directory/atomic-saves", atomic_saves);
     g_test_add_func("/directory/desktop-folder-events", desktop_folder_events);

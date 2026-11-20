@@ -31,7 +31,7 @@ static RenameEditor &editor_for(GtkGridView *grid)
 
 static GtkWidget *tile_label(GtkListItem *item)
 {
-    auto *box = gtk_list_item_get_child(item);
+    auto *box = tile_content(item);
     return gtk_widget_get_next_sibling(gtk_widget_get_first_child(box));
 }
 
@@ -123,7 +123,7 @@ static void show_editor(RenameEditor &editor, GtkListItem *item)
                                                     }),
                          &editor);
         gtk_widget_add_controller(entry, focus);
-        gtk_box_append(GTK_BOX(gtk_list_item_get_child(item)), entry);
+        gtk_box_append(GTK_BOX(tile_content(item)), entry);
     }
 
     editor.editing = item;
@@ -175,7 +175,7 @@ void attach_inline_rename(GtkWindow *window, GtkGridView *grid)
                                                         {
                                                             auto &editor = editor_for(view);
                                                             auto *info = G_FILE_INFO(gtk_list_item_get_item(item));
-                                                            if (info == editor.requested.get())
+                                                            if (info && info == editor.requested.get())
                                                                 gtk_widget_add_tick_callback(GTK_WIDGET(view), show_when_bound, nullptr, nullptr);
                                                         }),
                             grid, GConnectFlags{});

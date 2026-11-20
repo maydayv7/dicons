@@ -23,7 +23,9 @@ static void append_terminal(GMenu *menu, GFile *folder)
     g_autofree char *uri = g_file_get_uri(folder);
     g_autoptr(GMenuItem) item = g_menu_item_new("Open in Terminal", nullptr);
     g_menu_item_set_action_and_target(item, "desktop.terminal", "s", uri);
-    g_menu_append_item(menu, item);
+    g_autoptr(GMenu) terminal = g_menu_new();
+    g_menu_append_item(terminal, item);
+    g_menu_append_section(menu, nullptr, G_MENU_MODEL(terminal));
 }
 
 static ObjectPtr<GMenu> background_menu(GFile *folder)
@@ -35,9 +37,11 @@ static ObjectPtr<GMenu> background_menu(GFile *folder)
     append_templates(create);
     g_menu_append_submenu(menu.get(), "Create New", G_MENU_MODEL(create));
     append_sort_menu(menu.get());
-    g_menu_append(menu.get(), "Show Hidden Items", "desktop.show-hidden");
-    g_menu_append(menu.get(), "Show Thumbnails", "desktop.show-thumbnails");
-    g_menu_append(menu.get(), "Show Trash", "desktop.show-trash");
+    g_autoptr(GMenu) display = g_menu_new();
+    g_menu_append(display, "Show Hidden Items", "desktop.show-hidden");
+    g_menu_append(display, "Show Thumbnails", "desktop.show-thumbnails");
+    g_menu_append(display, "Show Trash", "desktop.show-trash");
+    g_menu_append_section(menu.get(), nullptr, G_MENU_MODEL(display));
     append_terminal(menu.get(), folder);
     return menu;
 }

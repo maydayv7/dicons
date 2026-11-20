@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
   <schema id="dev.maydayv7.dicons" path="/dev/maydayv7/dicons/">
+    <key name="icon-size" type="i">
+      <range min="24" max="128" />
+      <default>48</default>
+      <summary>Desktop icon size in pixels</summary>
+    </key>
+    <key name="icon-positions" type="a{s(uu)}">
+      <default>{}</default>
+      <summary>Manually arranged grid columns and rows by file URI</summary>
+    </key>
     <key name="show-trash" type="b">
       <default>true</default>
       <summary>Show the Trash icon</summary>
