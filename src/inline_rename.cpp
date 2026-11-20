@@ -199,6 +199,11 @@ void start_inline_rename(GtkGridView *grid, guint position)
     auto &editor = editor_for(grid);
     auto *model = G_LIST_MODEL(gtk_grid_view_get_model(grid));
     editor.requested.reset(G_FILE_INFO(g_list_model_get_item(model, position)));
+    if (!editor.requested || is_trash_icon(editor.requested.get()))
+    {
+        editor.requested.reset();
+        return;
+    }
     gtk_grid_view_scroll_to(grid, position, GTK_LIST_SCROLL_FOCUS, nullptr);
     if (auto *item = bound_item(grid, editor.requested.get()))
         show_editor(editor, item);

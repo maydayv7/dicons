@@ -2,6 +2,7 @@
 #include "create_item.hpp"
 #include "desktop_directory.hpp"
 #include "launch.hpp"
+#include "icon_grid.hpp"
 #include "selection_actions.hpp"
 #include "templates.hpp"
 
@@ -15,14 +16,6 @@ namespace
         GtkApplication *app;
         const DesktopDirectory &directory;
     };
-}
-
-static GtkListItem *target_item(GtkWidget *widget, GtkGridView *grid)
-{
-    while (widget && gtk_widget_get_parent(widget) != GTK_WIDGET(grid))
-        widget = gtk_widget_get_parent(widget);
-    auto *tile = widget ? gtk_widget_get_first_child(widget) : nullptr;
-    return tile ? static_cast<GtkListItem *>(g_object_get_data(G_OBJECT(tile), "desktop-item")) : nullptr;
 }
 
 static void append_terminal(GMenu *menu, GFile *folder)
@@ -44,6 +37,7 @@ static ObjectPtr<GMenu> background_menu(GFile *folder)
     append_sort_menu(menu.get());
     g_menu_append(menu.get(), "Show Hidden Items", "desktop.show-hidden");
     g_menu_append(menu.get(), "Show Thumbnails", "desktop.show-thumbnails");
+    g_menu_append(menu.get(), "Show Trash", "desktop.show-trash");
     append_terminal(menu.get(), folder);
     return menu;
 }
@@ -54,6 +48,11 @@ static ObjectPtr<GMenu> icon_menu(GtkSelectionModel *selection, GFileInfo *info)
     g_autoptr(GtkBitset) selected = gtk_selection_model_get_selection(selection);
     if (gtk_bitset_get_size(selected) == 1)
     {
+        if (is_trash_icon(info))
+        {
+            g_menu_append(menu.get(), "Open Trash", "desktop.open");
+            return menu;
+        }
         g_menu_append(menu.get(), "Open", "desktop.open");
         if (g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY)
             append_terminal(menu.get(), item_file(info));
@@ -169,6 +168,7 @@ void attach_context_menu(GtkWindow *window, GtkGridView *grid, const DesktopDire
     g_action_map_add_action_entries(G_ACTION_MAP(group), actions, G_N_ELEMENTS(actions), menu);
     g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(directory.show_hidden.get()));
     g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(directory.show_thumbnails.get()));
+    g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(directory.trash.visible.get()));
     gtk_widget_insert_action_group(desktop, "desktop", G_ACTION_GROUP(group));
     gtk_widget_insert_action_group(desktop, "sort", G_ACTION_GROUP(directory.sorting.actions.get()));
 

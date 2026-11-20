@@ -248,7 +248,11 @@ DesktopDirectory::DesktopDirectory(GFile *location, GtkApplication *app)
                                                                            { gtk_filter_changed(filter, GTK_FILTER_CHANGE_DIFFERENT); }),
                             filter, GConnectFlags{});
     auto *visible = gtk_filter_list_model_new(G_LIST_MODEL(g_object_ref(updates_->entries.get())), GTK_FILTER(filter));
-    items.reset(G_LIST_MODEL(gtk_sort_list_model_new(G_LIST_MODEL(visible), GTK_SORTER(g_object_ref(sorting.sorter.get())))));
+    ObjectPtr<GtkSortListModel> sorted{gtk_sort_list_model_new(G_LIST_MODEL(visible), GTK_SORTER(g_object_ref(sorting.sorter.get())))};
+    auto *sections = g_list_store_new(G_TYPE_LIST_MODEL);
+    g_list_store_append(sections, trash.items.get());
+    g_list_store_append(sections, sorted.get());
+    items.reset(G_LIST_MODEL(gtk_flatten_list_model_new(G_LIST_MODEL(sections))));
     updates_->start(location, changes.get(), app);
 }
 

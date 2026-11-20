@@ -17,6 +17,14 @@ GtkListItem *bound_item(GtkGridView *grid, GFileInfo *info)
     return found == items->end() ? nullptr : found->second;
 }
 
+GtkListItem *target_item(GtkWidget *widget, GtkGridView *grid)
+{
+    while (widget && gtk_widget_get_parent(widget) != GTK_WIDGET(grid))
+        widget = gtk_widget_get_parent(widget);
+    auto *tile = widget ? gtk_widget_get_first_child(widget) : nullptr;
+    return tile ? static_cast<GtkListItem *>(g_object_get_data(G_OBJECT(tile), "desktop-item")) : nullptr;
+}
+
 static void refresh_item(GtkListItem *item)
 {
     GFileInfo *info = static_cast<GFileInfo *>(gtk_list_item_get_item(item));
@@ -56,7 +64,7 @@ static GdkContentProvider *prepare_drag(GtkDragSource *, double, double,
     GtkGridView *grid = GTK_GRID_VIEW(gtk_widget_get_ancestor(tile, GTK_TYPE_GRID_VIEW));
     GtkSelectionModel *selection = gtk_grid_view_get_model(grid);
     guint position = gtk_list_item_get_position(item);
-    if (position == GTK_INVALID_LIST_POSITION)
+    if (position == GTK_INVALID_LIST_POSITION || is_trash_icon(G_FILE_INFO(gtk_list_item_get_item(item))))
         return nullptr;
     if (!gtk_selection_model_is_selected(selection, position))
         gtk_selection_model_select_item(selection, position, TRUE);
@@ -89,6 +97,12 @@ static void setup_item(GtkListItemFactory *, GtkListItem *item, GSimpleAction *s
     GtkDragSource *drag = gtk_drag_source_new();
     gtk_drag_source_set_actions(drag, GDK_ACTION_COPY);
     g_signal_connect_object(drag, "prepare", G_CALLBACK(prepare_drag), item, GConnectFlags{});
+    g_signal_connect_object(drag, "drag-begin", G_CALLBACK(+[](GtkDragSource *, GdkDrag *drag, GtkWidget *box)
+                                                           {
+                                                               auto *grid = gtk_widget_get_ancestor(box, GTK_TYPE_GRID_VIEW);
+                                                               g_object_set_data_full(G_OBJECT(drag), "dicons-origin", g_object_ref(grid), g_object_unref);
+                                                           }),
+                            box, GConnectFlags{});
     gtk_widget_add_controller(box, GTK_EVENT_CONTROLLER(drag));
 }
 
@@ -104,6 +118,7 @@ GtkGridView *create_icon_grid(const DesktopDirectory &directory, GtkApplication 
     auto *selection = gtk_multi_selection_new(g_object_ref(directory.items.get()));
     auto *grid = GTK_GRID_VIEW(gtk_grid_view_new(GTK_SELECTION_MODEL(selection), factory));
     g_signal_connect_object(directory.entries(), "items-changed", G_CALLBACK(entry_updated), grid, GConnectFlags{});
+    g_signal_connect_object(directory.trash.items.get(), "items-changed", G_CALLBACK(entry_updated), grid, GConnectFlags{});
     gtk_grid_view_set_max_columns(grid, 128);
     gtk_grid_view_set_enable_rubberband(grid, TRUE);
     g_signal_connect_object(grid, "activate", G_CALLBACK(open_item), app, GConnectFlags{});

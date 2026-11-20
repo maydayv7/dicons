@@ -35,6 +35,38 @@ static bool wait_for(auto predicate)
     return false;
 }
 
+static void pinned_trash()
+{
+    const fs::path data = g_get_user_data_dir();
+    const auto folder = data / "Desktop";
+    fs::create_directories(folder / "Trash");
+    ObjectPtr<GFile> desktop{g_file_new_for_path(folder.c_str())};
+    ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
+    DesktopDirectory directory{desktop.get(), app.get()};
+    auto *model = directory.items.get();
+    g_assert_true(wait_for([&] { return g_list_model_get_n_items(model) == 2; }));
+    ObjectPtr<GFileInfo> pinned{G_FILE_INFO(g_list_model_get_item(model, 0))};
+    g_assert_true(is_trash_icon(pinned.get()));
+    ObjectPtr<GtkMultiSelection> selection{gtk_multi_selection_new(g_object_ref(model))};
+    gtk_selection_model_select_item(GTK_SELECTION_MODEL(selection.get()), 1, true);
+    auto *sort = G_ACTION_GROUP(directory.sorting.actions.get());
+    g_action_group_activate_action(sort, "direction", g_variant_new_string("descending"));
+    g_assert_true(gtk_selection_model_is_selected(GTK_SELECTION_MODEL(selection.get()), 1));
+    g_action_activate(G_ACTION(directory.trash.visible.get()), nullptr);
+    g_assert_cmpuint(g_list_model_get_n_items(model), ==, 1);
+    g_assert_true(gtk_selection_model_is_selected(GTK_SELECTION_MODEL(selection.get()), 0));
+    g_action_activate(G_ACTION(directory.trash.visible.get()), nullptr);
+    g_assert_true(gtk_selection_model_is_selected(GTK_SELECTION_MODEL(selection.get()), 1));
+
+    const auto files = data / "Trash/files";
+    fs::create_directories(files);
+    std::ofstream(files / "from outside") << "example";
+    auto full = [&] { return g_file_info_get_attribute_boolean(pinned.get(), "dicons::full"); };
+    g_assert_true(wait_for(full));
+    fs::remove(files / "from outside");
+    g_assert_true(wait_for([&] { return !full(); }));
+}
+
 static void atomic_saves()
 {
     const auto root = fs::path(g_get_user_data_dir()) / "Desktop";
@@ -43,6 +75,7 @@ static void atomic_saves()
     ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
     ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
     DesktopDirectory directory{folder.get(), app.get()};
+    g_simple_action_set_state(directory.trash.visible.get(), g_variant_new_boolean(false));
     const auto selection = [&directory]
     {
         return ObjectPtr<GtkMultiSelection>{gtk_multi_selection_new(g_object_ref(directory.items.get()))};
@@ -86,6 +119,7 @@ static void desktop_folder_events()
     ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
     ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
     DesktopDirectory directory{folder.get(), app.get()};
+    g_simple_action_set_state(directory.trash.visible.get(), g_variant_new_boolean(false));
     auto *items = directory.items.get();
     g_assert_true(wait_for([&]
                            { return position_of(items, "first") != GTK_INVALID_LIST_POSITION; }));
@@ -107,6 +141,7 @@ static void hidden_items()
     ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
     ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
     DesktopDirectory directory{folder.get(), app.get()};
+    g_simple_action_set_state(directory.trash.visible.get(), g_variant_new_boolean(false));
     ObjectPtr<GFile> staging{g_file_get_child(folder.get(), ".working")};
     g_hash_table_add(directory.staging.get(), g_object_ref(staging.get()));
     fs::create_directory(root / ".working");
@@ -142,6 +177,7 @@ static void sorted_directory()
     ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
     ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
     DesktopDirectory directory{folder.get(), app.get()};
+    g_simple_action_set_state(directory.trash.visible.get(), g_variant_new_boolean(false));
     auto *model = directory.items.get();
     const auto expect = [&](std::initializer_list<const char *> names)
     {
@@ -204,6 +240,7 @@ static void launcher_order()
     ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
     ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
     DesktopDirectory directory{folder.get(), app.get()};
+    g_simple_action_set_state(directory.trash.visible.get(), g_variant_new_boolean(false));
     auto *model = directory.items.get();
     g_assert_true(wait_for([&]
                            { return position_of(model, "middle.txt") == 1; }));
@@ -230,6 +267,7 @@ static void symlink_targets()
     ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
     ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
     DesktopDirectory directory{folder.get(), app.get()};
+    g_simple_action_set_state(directory.trash.visible.get(), g_variant_new_boolean(false));
     auto expect = [&](GFileType type, goffset size = -1)
     {
         g_assert_true(wait_for([&]
@@ -253,11 +291,11 @@ static void symlink_targets()
     std::ofstream(base / "app.desktop") << "[Desktop Entry]\nType=Application\nName=Calendar\nIcon=office-calendar\nExec=true\n";
     fs::remove(base / "hop");
     fs::create_symlink("app.desktop", base / "hop");
+    ObjectPtr<GIcon> expected{g_themed_icon_new("office-calendar")};
     g_assert_true(wait_for([&]
                            {
         ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(directory.items.get(), 0))};
-        g_autoptr(GIcon) expected = g_themed_icon_new("office-calendar");
-        return info && g_file_info_get_icon(info.get()) && g_icon_equal(g_file_info_get_icon(info.get()), expected); }));
+        return info && g_file_info_get_icon(info.get()) && g_icon_equal(g_file_info_get_icon(info.get()), expected.get()); }));
 }
 
 static void directory_burst()
@@ -275,6 +313,7 @@ static void directory_burst()
     ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
     g_test_timer_start();
     DesktopDirectory directory{folder.get(), app.get()};
+    g_simple_action_set_state(directory.trash.visible.get(), g_variant_new_boolean(false));
     const auto await_count = [&](guint count)
     {
         bool expired = false;
@@ -305,7 +344,9 @@ static void directory_burst()
 
 int main(int argc, char **argv)
 {
+    g_setenv("GIO_USE_VFS", "local", true);
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
+    g_test_add_func("/directory/pinned-trash", pinned_trash);
     g_test_add_func("/directory/atomic-saves", atomic_saves);
     g_test_add_func("/directory/desktop-folder-events", desktop_folder_events);
     g_test_add_func("/directory/hidden-items", hidden_items);

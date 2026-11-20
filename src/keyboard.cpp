@@ -1,4 +1,5 @@
 #include "keyboard.hpp"
+#include "trash_actions.hpp"
 #include "selection_actions.hpp"
 #include "inline_rename.hpp"
 
@@ -14,6 +15,11 @@ static gboolean key_pressed(GtkEventControllerKey *, guint key, guint, GdkModifi
         return false;
 
     auto *selection = gtk_grid_view_get_model(grid);
+    if (modifiers == GDK_CONTROL_MASK && gdk_keyval_to_lower(key) == GDK_KEY_z)
+    {
+        undo_trash(grid);
+        return true;
+    }
     if (modifiers == GDK_CONTROL_MASK && gdk_keyval_to_lower(key) == GDK_KEY_h)
         return gtk_widget_activate_action(GTK_WIDGET(grid), "desktop.show-hidden", nullptr);
     if (modifiers == GDK_CONTROL_MASK && gdk_keyval_to_lower(key) == GDK_KEY_a)

@@ -2,6 +2,7 @@
 
 #include "gobject_ptr.hpp"
 #include "desktop_sort.hpp"
+#include "trash_icon.hpp"
 #include <gtk/gtk.h>
 
 using FileSet = std::unique_ptr<GHashTable, GlibDeleter<g_hash_table_unref>>;
@@ -19,6 +20,7 @@ struct DesktopDirectory
     FileSet staging;
     ObjectPtr<GSimpleAction> show_hidden;
     ObjectPtr<GSimpleAction> show_thumbnails{g_simple_action_new_stateful("show-thumbnails", nullptr, g_variant_new_boolean(true))};
+    TrashIcon trash;
     ObjectPtr<GListModel> items;
 
 private:

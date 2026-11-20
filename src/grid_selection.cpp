@@ -12,7 +12,8 @@ std::vector<GFile *> selected_files(GtkSelectionModel *selection)
          valid; valid = gtk_bitset_iter_next(&iter, &position))
     {
         ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(G_LIST_MODEL(selection), position))};
-        files.push_back(item_file(info.get()));
+        if (!is_trash_icon(info.get()))
+            files.push_back(item_file(info.get()));
     }
     return files;
 }

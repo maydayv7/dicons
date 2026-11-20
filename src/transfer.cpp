@@ -1,5 +1,7 @@
 #include "transfer.hpp"
 #include "grid_selection.hpp"
+#include "icon_grid.hpp"
+#include "trash_actions.hpp"
 #include "copy.hpp"
 #include "copy_stage.hpp"
 #include "collision_dialog.hpp"
@@ -26,6 +28,7 @@ namespace
         ObjectPtr<GFile> stage{};
         bool keep_both{};
         bool copied{};
+        bool to_trash{};
     };
 }
 
@@ -126,32 +129,68 @@ static void files_received(GObject *source, GAsyncResult *result, gpointer data)
     auto *drop = GDK_DROP(source);
     g_autoptr(GError) error = nullptr;
     const GValue *value = gdk_drop_read_value_finish(drop, result, &error);
-    const bool ready = value && prepare_copy(*transfer, value);
-
-    // Release the pointer before copy resolution
+    if (!value)
+    {
+        gdk_drop_finish(drop, GdkDragAction{});
+        notify_error(transfer->app.get(), "Could not receive dropped files", error->message);
+        return;
+    }
+    if (transfer->to_trash)
+    {
+        auto *drag = gdk_drop_get_drag(drop);
+        auto *origin = drag ? static_cast<GtkGridView *>(g_object_get_data(G_OBJECT(drag), "dicons-origin")) : nullptr;
+        auto *grid = origin && gtk_widget_get_root(GTK_WIDGET(origin)) ? origin : transfer->grid.get();
+        if (!gtk_widget_get_root(GTK_WIDGET(grid)))
+        {
+            gdk_drop_finish(drop, GdkDragAction{});
+            return;
+        }
+        auto *list = static_cast<GdkFileList *>(g_value_get_boxed(value));
+        std::vector<GFile *> files;
+        for (auto *link = gdk_file_list_get_files(list); link; link = link->next)
+            files.push_back(G_FILE(link->data));
+        // Our source offers COPY to other apps
+        // Here we own both ends of the drag
+        auto action = origin ? GDK_ACTION_COPY : GDK_ACTION_MOVE;
+        trash_files(grid, files, [drop = GDK_DROP(g_object_ref(drop)), action](bool ok)
+                    {
+            gdk_drop_finish(drop, ok ? action : GdkDragAction{});
+            g_object_unref(drop); });
+        return;
+    }
+    // Release before collision resolution
+    const bool ready = prepare_copy(*transfer, value);
     const bool can_copy = (gdk_drop_get_actions(drop) & GDK_ACTION_COPY) != 0;
     gdk_drop_finish(drop, ready && can_copy ? GDK_ACTION_COPY : GdkDragAction{});
-
     if (ready)
         next_item(transfer.release());
-    else if (!value)
-        notify_error(transfer->app.get(), "Could not receive dropped files", error->message);
 }
 
-// Some compositors preselect MOVE before the destination has offered its actions
-// Negotiate COPY for file offers and let Wayland match it against the source
 static gboolean accepts_files(GtkDropTargetAsync *target, GdkDrop *drop, gpointer)
 {
     return gdk_content_formats_match(gtk_drop_target_async_get_formats(target), gdk_drop_get_formats(drop));
 }
 
-static GdkDragAction prefer_copy(GtkDropTargetAsync *, GdkDrop *, double, double, gpointer)
+static bool over_trash(GtkDropTargetAsync *target, double x, double y, GtkGridView *grid)
 {
+    auto *window = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(target));
+    auto *item = target_item(gtk_widget_pick(window, x, y, GTK_PICK_DEFAULT), grid);
+    return item && gtk_list_item_get_item(item) && is_trash_icon(G_FILE_INFO(gtk_list_item_get_item(item)));
+}
+
+static GdkDragAction drop_action(GtkDropTargetAsync *target, GdkDrop *drop, double x, double y, GtkGridView *grid)
+{
+    auto *drag = gdk_drop_get_drag(drop);
+    bool ours = drag && g_object_get_data(G_OBJECT(drag), "dicons-origin");
+    if (!ours && over_trash(target, x, y, grid))
+        return GdkDragAction(gdk_drop_get_actions(drop) & GDK_ACTION_MOVE);
     return GDK_ACTION_COPY;
 }
 
-static gboolean accept_drop(GtkDropTargetAsync *, GdkDrop *drop, double, double, GtkGridView *grid)
+static gboolean accept_drop(GtkDropTargetAsync *target, GdkDrop *drop, double x, double y, GtkGridView *grid)
 {
+    if (!drop_action(target, drop, x, y, grid))
+        return false;
     GtkWindow *window = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(grid)));
     auto *selection = gtk_grid_view_get_model(grid);
     auto *site = static_cast<DropSite *>(g_object_get_data(G_OBJECT(selection), "drop-site"));
@@ -159,6 +198,7 @@ static gboolean accept_drop(GtkDropTargetAsync *, GdkDrop *drop, double, double,
         .grid = retain(grid),
         .app = retain(G_APPLICATION(gtk_window_get_application(window))),
         .site = *site,
+        .to_trash = over_trash(target, x, y, grid),
     };
     gdk_drop_read_value_async(drop, GDK_TYPE_FILE_LIST, G_PRIORITY_DEFAULT, nullptr, files_received, transfer);
     return TRUE;
@@ -173,11 +213,11 @@ void transfer_attach(GtkWindow *window, GtkGridView *grid, GFile *desktop, GHash
 
     GdkContentFormats *formats = gdk_content_formats_new_for_gtype(GDK_TYPE_FILE_LIST);
     formats = gdk_content_formats_union_deserialize_mime_types(formats);
-    GtkDropTargetAsync *target = gtk_drop_target_async_new(formats, GDK_ACTION_COPY);
+    GtkDropTargetAsync *target = gtk_drop_target_async_new(formats, GdkDragAction(GDK_ACTION_COPY | GDK_ACTION_MOVE));
     gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(target), GTK_PHASE_CAPTURE);
     g_signal_connect(target, "accept", G_CALLBACK(accepts_files), nullptr);
-    g_signal_connect(target, "drag-enter", G_CALLBACK(prefer_copy), nullptr);
-    g_signal_connect(target, "drag-motion", G_CALLBACK(prefer_copy), nullptr);
+    g_signal_connect_object(target, "drag-enter", G_CALLBACK(drop_action), grid, GConnectFlags{});
+    g_signal_connect_object(target, "drag-motion", G_CALLBACK(drop_action), grid, GConnectFlags{});
     g_signal_connect_object(target, "drop", G_CALLBACK(accept_drop), grid, GConnectFlags{});
     gtk_widget_add_controller(GTK_WIDGET(window), GTK_EVENT_CONTROLLER(target));
 }

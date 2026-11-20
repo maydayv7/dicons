@@ -47,6 +47,9 @@ add_library(dicons-core STATIC
     src/launch.cpp
     src/notifications.cpp
     src/collision_dialog.cpp
+    src/trash_icon.cpp
+    src/trash_file.cpp
+    src/trash_actions.cpp
     src/transfer.cpp
     src/copy.cpp
 )
@@ -67,6 +70,7 @@ if(BUILD_TESTING)
     dicons_test(rename rename.cpp)
     dicons_test(directory desktop_directory.cpp)
     dicons_test(thumbnails thumbnails.cpp)
+    dicons_test(trash trash.cpp)
 endif()
 
 install(TARGETS dicons RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")

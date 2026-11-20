@@ -13,7 +13,7 @@
 - [x] Right-click context menu, create Templates
 - [x] Sort icons by name, modification time, size, or file type
 - [x] Image and document thumbnails
-- [ ] Trash icon
+- [x] Trash icon
 
 ### Keyboard shortcuts
 
@@ -26,6 +26,7 @@
 | Esc               | Clear the selection                                           |
 | F2                | Edit the filename. Enter or clicking away saves. Esc cancels. |
 | Delete            | Move all selected items to Trash                              |
+| Ctrl+Z            | Undo last Delete                                              |
 
 ## Supported Desktops
 
@@ -42,6 +43,7 @@ Exclusively tested on Hyprland, but should be compatible with any `wlroots` base
 - GLib >=2.74 (`gio-unix-2.0`)
 - GTK4 Layer Shell (`gtk4-layer-shell-0`)
 - `xdg-terminal-exec` for Open in Terminal
+- Option file manager that handles `trash:///`
 - Optional system thumbnailers (like [Papers](https://gitlab.gnome.org/GNOME/papers) provides for PDFs)
 
 ### Installation

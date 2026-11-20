@@ -187,8 +187,25 @@ void bind_item_icon(GtkWidget *widget, GFileInfo *info)
     }
     else
         gtk_image_set_from_icon_name(icon.base, "text-x-generic");
-    gtk_widget_set_visible(GTK_WIDGET(icon.badge), link);
-    gtk_widget_set_tooltip_text(widget, broken ? "Broken symbolic link" : (link ? "Symbolic link" : nullptr));
+    bool trash = is_trash_icon(info);
+    bool full = trash && g_file_info_get_attribute_boolean(info, "dicons::full");
+    // Minimal themes ship only empty icon
+    auto *theme = gtk_icon_theme_get_for_display(gtk_widget_get_display(widget));
+    bool mark_full = full && !gtk_icon_theme_has_icon(theme, "user-trash-full") &&
+                     !gtk_icon_theme_has_icon(theme, "user-trash-full-symbolic");
+    auto *badge = GTK_WIDGET(icon.badge);
+    if (mark_full || link)
+    {
+        gtk_image_set_from_icon_name(icon.badge, mark_full ? "list-add-symbolic" : "emblem-symbolic-link");
+        gtk_widget_set_halign(badge, mark_full ? GTK_ALIGN_END : GTK_ALIGN_START);
+        if (mark_full)
+            gtk_widget_add_css_class(badge, "osd");
+        else
+            gtk_widget_remove_css_class(badge, "osd");
+    }
+    gtk_widget_set_visible(badge, link || mark_full);
+    const char *tooltip = broken ? "Broken symbolic link" : (link ? "Symbolic link" : nullptr);
+    gtk_widget_set_tooltip_text(widget, trash ? (full ? "Trash contains items" : "Trash is empty") : tooltip);
     update_preview(icon);
 }
 

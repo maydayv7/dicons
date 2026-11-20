@@ -13,6 +13,14 @@ static void default_opened(GObject *, GAsyncResult *result, gpointer data)
         notify_error(app, "Could not open item", error->message);
 }
 
+static void trash_opened(GObject *source, GAsyncResult *result, gpointer data)
+{
+    ObjectPtr<GApplication> app{G_APPLICATION(data)};
+    g_autoptr(GError) error = nullptr;
+    if (!g_app_info_launch_uris_finish(G_APP_INFO(source), result, &error))
+        notify_error(app.get(), "Could not open Trash", error->message);
+}
+
 void open_item(GtkGridView *grid, guint position, GtkApplication *app)
 {
     auto *model = G_LIST_MODEL(gtk_grid_view_get_model(grid));
@@ -24,6 +32,21 @@ void open_item(GtkGridView *grid, guint position, GtkApplication *app)
     g_autoptr(GdkAppLaunchContext) context = gdk_display_get_app_launch_context(display);
     g_autoptr(GError) error = nullptr;
 
+    if (is_trash_icon(item))
+    {
+        // File managers that advertise inode/directory without registering x-scheme-handler/trash
+        ObjectPtr<GAppInfo> handler{g_app_info_get_default_for_uri_scheme("trash")};
+        if (!handler)
+            handler.reset(g_app_info_get_default_for_type("inode/directory", true));
+        if (handler)
+        {
+            g_autofree char *uri = g_file_get_uri(file);
+            GList uris{uri};
+            g_app_info_launch_uris_async(handler.get(), &uris, G_APP_LAUNCH_CONTEXT(context), nullptr,
+                                         trash_opened, g_object_ref(app));
+            return;
+        }
+    }
     if (has_launcher_name(item))
     {
         g_autoptr(GFileInfo) current = g_file_query_info(file, "standard::type,access::can-execute",
