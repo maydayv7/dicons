@@ -15,6 +15,7 @@ struct GridCell
 using IconPositions = std::map<std::string, GridCell>;
 
 IconPositions read_positions(GSettings *settings);
+bool write_positions(GSettings *settings, const IconPositions &positions);
 void relocate_position(GSettings *settings, GFile *from, GFile *to);
 
 // Each monitor fits the shared positions to its viewport

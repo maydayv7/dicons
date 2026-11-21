@@ -3,22 +3,60 @@
 #include "desktop_item.hpp"
 #include "notifications.hpp"
 
-#include <gio/gdesktopappinfo.h>
+#include <unistd.h>
 
-static void default_opened(GObject *, GAsyncResult *result, gpointer data)
+static void start_app_session(gpointer)
+{
+    setsid();
+}
+
+gboolean launch_desktop_app(GDesktopAppInfo *handler, GList *uris, GAppLaunchContext *context, GError **error)
+{
+    return g_desktop_app_info_launch_uris_as_manager(handler, uris, context, G_SPAWN_SEARCH_PATH,
+                                                     start_app_session, nullptr, nullptr, nullptr, error);
+}
+
+static void default_opened(GObject *source, GAsyncResult *result, gpointer data)
 {
     g_autoptr(GApplication) app = G_APPLICATION(data);
     g_autoptr(GError) error = nullptr;
-    if (!g_app_info_launch_default_for_uri_finish(result, &error))
+    bool launched = G_IS_APP_INFO(source) ? g_app_info_launch_uris_finish(G_APP_INFO(source), result, &error)
+                                          : g_app_info_launch_default_for_uri_finish(result, &error);
+    if (!launched)
         notify_error(app, "Could not open item", error->message);
 }
 
-static void trash_opened(GObject *source, GAsyncResult *result, gpointer data)
+static void open_uri(GFile *file, GAppInfo *handler, GAppLaunchContext *context, GApplication *app, const char *title)
 {
-    ObjectPtr<GApplication> app{G_APPLICATION(data)};
-    g_autoptr(GError) error = nullptr;
-    if (!g_app_info_launch_uris_finish(G_APP_INFO(source), result, &error))
-        notify_error(app.get(), "Could not open Trash", error->message);
+    g_autofree char *uri = g_file_get_uri(file);
+    GList uris{uri};
+    if (G_IS_DESKTOP_APP_INFO(handler))
+    {
+        g_autoptr(GError) error = nullptr;
+        if (!launch_desktop_app(G_DESKTOP_APP_INFO(handler), &uris, context, &error))
+            notify_error(app, title, error->message);
+        return;
+    }
+    if (handler)
+    {
+        g_app_info_launch_uris_async(handler, &uris, context, nullptr, default_opened, g_object_ref(app));
+        return;
+    }
+    g_app_info_launch_default_for_uri_async(uri, context, nullptr, default_opened, g_object_ref(app));
+}
+
+struct OpenRequest
+{
+    ObjectPtr<GAppLaunchContext> context;
+    ObjectPtr<GApplication> app;
+};
+
+static void handler_ready(GObject *source, GAsyncResult *result, gpointer data)
+{
+    std::unique_ptr<OpenRequest> request{static_cast<OpenRequest *>(data)};
+    auto *file = G_FILE(source);
+    ObjectPtr<GAppInfo> handler{g_file_query_default_handler_finish(file, result, nullptr)};
+    open_uri(file, handler.get(), request->context.get(), request->app.get(), "Could not open item");
 }
 
 void open_item(GtkGridView *grid, guint position, GtkApplication *app)
@@ -40,10 +78,7 @@ void open_item(GtkGridView *grid, guint position, GtkApplication *app)
             handler.reset(g_app_info_get_default_for_type("inode/directory", true));
         if (handler)
         {
-            g_autofree char *uri = g_file_get_uri(file);
-            GList uris{uri};
-            g_app_info_launch_uris_async(handler.get(), &uris, G_APP_LAUNCH_CONTEXT(context), nullptr,
-                                         trash_opened, g_object_ref(app));
+            open_uri(file, handler.get(), G_APP_LAUNCH_CONTEXT(context), G_APPLICATION(app), "Could not open Trash");
             return;
         }
     }
@@ -66,7 +101,7 @@ void open_item(GtkGridView *grid, guint position, GtkApplication *app)
                     g_set_error(&error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
                                 "Invalid launcher: %s", g_file_info_get_display_name(item));
                 else
-                    g_app_info_launch(G_APP_INFO(launcher), nullptr, G_APP_LAUNCH_CONTEXT(context), &error);
+                    launch_desktop_app(launcher, nullptr, G_APP_LAUNCH_CONTEXT(context), &error);
             }
             if (!error)
                 return;
@@ -78,9 +113,8 @@ void open_item(GtkGridView *grid, guint position, GtkApplication *app)
         }
     }
 
-    g_autofree char *uri = g_file_get_uri(file);
-    g_app_info_launch_default_for_uri_async(uri, G_APP_LAUNCH_CONTEXT(context), nullptr,
-                                            default_opened, g_object_ref(app));
+    auto *request = new OpenRequest{retain(G_APP_LAUNCH_CONTEXT(context)), retain(G_APPLICATION(app))};
+    g_file_query_default_handler_async(file, G_PRIORITY_DEFAULT, nullptr, handler_ready, request);
 }
 
 static void terminal_finished(GObject *source, GAsyncResult *result, gpointer data)
@@ -95,6 +129,7 @@ void open_terminal(GtkApplication *app, GFile *folder)
 {
     g_autoptr(GError) error = nullptr;
     g_autoptr(GSubprocessLauncher) launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE);
+    g_subprocess_launcher_set_child_setup(launcher, start_app_session, nullptr, nullptr);
     g_subprocess_launcher_set_cwd(launcher, g_file_peek_path(folder));
     g_autofree char *argument = g_strdup_printf("--dir=%s", g_file_peek_path(folder));
     g_autoptr(GSubprocess) process = g_subprocess_launcher_spawn(launcher, &error, "xdg-terminal-exec", argument, nullptr);

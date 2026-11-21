@@ -1,3 +1,4 @@
+#include "undo.hpp"
 #include "icon_grid.hpp"
 #include "grid_layout.hpp"
 #include "grid_selection.hpp"
@@ -106,6 +107,7 @@ struct DesktopDrag
     ObjectPtr<GtkGridView> origin;
     std::vector<std::string> uris;
     bool trash;
+    std::shared_ptr<DragIdentities> identities = std::make_shared<DragIdentities>();
 };
 
 static DesktopDrag *desktop_drag(GdkDrop *drop)
@@ -126,6 +128,12 @@ bool dragging_trash(GdkDrop *drop)
     return drag && drag->trash;
 }
 
+std::shared_ptr<const DragIdentities> drag_identities(GdkDrop *drop)
+{
+    auto *drag = desktop_drag(drop);
+    return drag ? drag->identities : nullptr;
+}
+
 bool move_icons(GdkDrop *drop, GtkGridView *grid, GtkWidget *window, double x, double y)
 {
     auto *drag = desktop_drag(drop);
@@ -133,8 +141,16 @@ bool move_icons(GdkDrop *drop, GtkGridView *grid, GtkWidget *window, double x, d
     if (!drag)
         return false;
     auto *picked = gtk_widget_pick(window, x, y, GTK_PICK_DEFAULT);
+    auto move = [&](guint position)
+    {
+        bool moved = false;
+        change_view(G_APPLICATION(gtk_window_get_application(GTK_WINDOW(window))), view.layout.settings.get(), nullptr,
+                    [&]
+                    { moved = view.layout.move(drag->uris, position); });
+        return moved;
+    };
     if (auto *slot = target_slot(picked, grid))
-        return view.layout.move(drag->uris, gtk_list_item_get_position(slot));
+        return move(gtk_list_item_get_position(slot));
 
     // GTK has no list item below the final row
     graphene_point_t from{float(x), float(y)}, point;
@@ -150,7 +166,7 @@ bool move_icons(GdkDrop *drop, GtkGridView *grid, GtkWidget *window, double x, d
     guint count = g_list_model_get_n_items(G_LIST_MODEL(layout.slots.get()));
     guint rows = std::max(layout.rows, (count + layout.columns - 1) / layout.columns);
     int row = std::clamp(int(point.y + gtk_adjustment_get_value(vertical)) / view.cell_height, 0, int(rows) - 1);
-    return layout.move(drag->uris, row * layout.columns + column);
+    return move(row * layout.columns + column);
 }
 
 static GdkContentProvider *prepare_drag(GtkDragSource *, double, double, GtkListItem *item)
@@ -167,11 +183,7 @@ static GdkContentProvider *prepare_drag(GtkDragSource *, double, double, GtkList
     auto *info = G_FILE_INFO(gtk_list_item_get_item(item));
     if (is_trash_icon(info))
         return gdk_content_provider_new_typed(G_TYPE_FILE_INFO, info);
-    auto files = selected_files(selection);
-    g_auto(GValue) value = G_VALUE_INIT;
-    g_value_init(&value, GDK_TYPE_FILE_LIST);
-    g_value_take_boxed(&value, gdk_file_list_new_from_array(files.data(), files.size()));
-    return gdk_content_provider_new_for_value(&value);
+    return selected_file_content(selection);
 }
 
 static void drag_began(GtkDragSource *, GdkDrag *gdk_drag, GtkListItem *item)
@@ -190,13 +202,18 @@ static void drag_began(GtkDragSource *, GdkDrag *gdk_drag, GtkListItem *item)
     guint i;
     for (bool valid = gtk_bitset_iter_init_first(&iter, selected, &i); valid; valid = gtk_bitset_iter_next(&iter, &i))
     {
-        if (i == position)
-            continue;
         ObjectPtr<GFileInfo> other{G_FILE_INFO(g_list_model_get_item(G_LIST_MODEL(selection), i))};
         if (auto *file = item_file(other.get()))
         {
             g_autofree char *uri = g_file_get_uri(file);
-            drag->uris.emplace_back(uri);
+            if (i != position)
+                drag->uris.emplace_back(uri);
+            if (!is_trash_icon(other.get()))
+            {
+                if (g_file_info_get_is_symlink(other.get()))
+                    other.reset(g_file_query_info(file, drop_identity_attributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr));
+                drag->identities->try_emplace(uri, other.get());
+            }
         }
     }
 }

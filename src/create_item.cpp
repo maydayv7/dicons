@@ -1,3 +1,4 @@
+#include "undo.hpp"
 #include "create_item.hpp"
 #include "copy.hpp"
 #include "copy_stage.hpp"
@@ -14,6 +15,7 @@ namespace
         ObjectPtr<GtkGridView> grid;
         ObjectPtr<GApplication> app;
         ObjectPtr<GFile> desktop;
+        UndoToken undo;
         NewItem kind;
         ObjectPtr<GFile> source;
         ObjectPtr<GFile> stage;
@@ -59,7 +61,10 @@ static void create_worker(GTask *task, gpointer, gpointer data, GCancellable *)
     g_autoptr(GError) error = nullptr;
     auto item = create_unique(*static_cast<Creation *>(data), &error);
     if (item)
+    {
+        remember_file(static_cast<Creation *>(data)->undo, item.get());
         g_task_return_pointer(task, item.release(), g_object_unref);
+    }
     else
         g_task_return_error(task, g_steal_pointer(&error));
 }
@@ -69,6 +74,7 @@ static void created(GObject *, GAsyncResult *result, gpointer)
     auto *request = static_cast<Creation *>(g_task_get_task_data(G_TASK(result)));
     g_autoptr(GError) error = nullptr;
     ObjectPtr<GFile> item{G_FILE(g_task_propagate_pointer(G_TASK(result), &error))};
+    finish_undo_step(request->app.get(), request->undo);
     if (request->stage)
         remove_copy_stage(request->stage.get(), request->staging.get(), request->app.get());
     if (error)
@@ -95,6 +101,7 @@ void create_item(GtkGridView *grid, const DesktopDirectory &directory, NewItem k
         if (!request->stage)
             return;
     }
+    request->undo = begin_undo_step(app);
     ObjectPtr<GTask> task{g_task_new(nullptr, nullptr, created, nullptr)};
     g_task_set_task_data(task.get(), request.release(), [](gpointer p)
                          { delete static_cast<Creation *>(p); });

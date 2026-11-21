@@ -5,7 +5,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <format>
 
 static gboolean copy_tree(GFile *source, GFile *target, const char *stage_id, GError **error)
 {
@@ -127,20 +126,10 @@ ObjectPtr<GFile> desktop_copy_item(GFile *source, GFile *desktop, GFile *stage, 
     if (!stage_info)
         return nullptr;
     gboolean ready = copy_tree(source, staged, g_file_info_get_attribute_string(stage_info, "id::file"), error);
-    const auto stem = directory ? filename : filename.stem();
-    const auto extension = directory ? std::filesystem::path{} : filename.extension();
-    for (guint n = 1; ready; n++)
+    if (ready)
     {
-        if (keep_both)
-        {
-            const auto alternative = std::format("{} ({}){}", stem.native(), n, extension.native());
-            destination.reset(g_file_get_child(desktop, alternative.c_str()));
-        }
-        if (rename_no_replace(staged, destination.get(), error))
-            return destination;
-        if (!keep_both || !g_error_matches(*error, G_IO_ERROR, G_IO_ERROR_EXISTS))
-            break;
-        g_clear_error(error);
+        if (auto published = publish_copy(staged, desktop, name, keep_both, error))
+            return published;
     }
 
     g_autoptr(GError) cleanup = nullptr;

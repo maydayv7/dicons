@@ -1,6 +1,7 @@
 #include "desktop_directory.hpp"
 #include "desktop_windows.hpp"
 #include "preferences.hpp"
+#include "undo.hpp"
 
 #include <gtk4-layer-shell.h>
 #include <glib/gstdio.h>
@@ -55,6 +56,7 @@ namespace
 
             ObjectPtr<GFile> folder{g_file_new_for_path(path)};
             auto preferences = desktop_preferences();
+            attach_undo_preferences(G_APPLICATION(app_.get()), preferences.get());
             directory_.emplace(folder.get(), app_.get(), preferences.get());
             auto *display = gdk_display_get_default();
             install_desktop_style(display);

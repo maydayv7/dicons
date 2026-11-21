@@ -54,10 +54,48 @@ static void preserve_existing()
     g_assert_cmpstr(contents.c_str(), ==, "existing");
 }
 
+static void folder_drop()
+{
+    const fs::path desktop = fs::path(g_get_user_data_dir()) / "Desktop";
+    const auto folder = desktop / "Folder";
+    fs::create_directories(folder);
+    std::ofstream(desktop / "note.txt") << "move me";
+    fs::create_hard_link(desktop / "note.txt", desktop / "original");
+    ObjectPtr<GFile> target{g_file_new_for_path(folder.c_str())};
+    ObjectPtr<GFile> note{g_file_new_for_path((desktop / "note.txt").c_str())};
+    g_autoptr(GError) error = nullptr;
+    g_assert_nonnull(move_into_folder(note.get(), target.get(), false, &error));
+    g_assert_no_error(error);
+    g_assert_false(fs::exists(desktop / "note.txt"));
+    g_assert_true(fs::equivalent(folder / "note.txt", desktop / "original"));
+
+    std::ofstream(desktop / "note.txt") << "second";
+    std::ofstream(folder / "note (1).txt") << "taken";
+    g_assert_null(move_into_folder(note.get(), target.get(), false, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_EXISTS);
+    g_clear_error(&error);
+    g_assert_true(fs::exists(desktop / "note.txt"));
+    g_assert_nonnull(move_into_folder(note.get(), target.get(), true, &error));
+    g_assert_no_error(error);
+    g_assert_false(fs::exists(desktop / "note.txt"));
+    g_assert_true(fs::exists(folder / "note (2).txt"));
+    g_assert_true(fs::equivalent(folder / "note.txt", desktop / "original"));
+
+    fs::create_symlink("missing", desktop / "link");
+    ObjectPtr<GFile> link{g_file_new_for_path((desktop / "link").c_str())};
+    g_assert_nonnull(move_into_folder(link.get(), target.get(), false, &error));
+    g_assert_no_error(error);
+    g_assert_false(fs::is_symlink(desktop / "link"));
+    g_assert_true(fs::read_symlink(folder / "link") == "missing");
+    g_assert_null(move_into_folder(target.get(), target.get(), false, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_WOULD_RECURSE);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
     g_test_add_func("/rename/items", rename_items);
     g_test_add_func("/rename/preserve-existing", preserve_existing);
+    g_test_add_func("/rename/folder-drop", folder_drop);
     return g_test_run();
 }

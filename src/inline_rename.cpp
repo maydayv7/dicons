@@ -1,3 +1,4 @@
+#include "undo.hpp"
 #include "inline_rename.hpp"
 #include "desktop_directory.hpp"
 #include "file_rename.hpp"
@@ -21,6 +22,7 @@ namespace
         ObjectPtr<GtkGridView> grid;
         ObjectPtr<GApplication> app;
         bool keep_selected;
+        UndoToken undo;
     };
 }
 
@@ -58,9 +60,14 @@ static void close_editor(RenameEditor &editor, bool restore_focus)
 static void rename_worker(GTask *task, gpointer source, gpointer data, GCancellable *)
 {
     g_autoptr(GError) error = nullptr;
+    auto original = file_identity(G_FILE(source));
     auto renamed = rename_desktop_item(G_FILE(source), static_cast<const char *>(data), &error);
     if (renamed)
+    {
+        auto *request = static_cast<RenameRequest *>(g_async_result_get_user_data(G_ASYNC_RESULT(task)));
+        remember_file(request->undo, renamed.get(), G_FILE(source), original);
         g_task_return_pointer(task, renamed.release(), g_object_unref);
+    }
     else
         g_task_return_error(task, g_steal_pointer(&error));
 }
@@ -70,6 +77,7 @@ static void rename_finished(GObject *source, GAsyncResult *result, gpointer data
     std::unique_ptr<RenameRequest> request{static_cast<RenameRequest *>(data)};
     g_autoptr(GError) error = nullptr;
     ObjectPtr<GFile> renamed{static_cast<GFile *>(g_task_propagate_pointer(G_TASK(result), &error))};
+    finish_undo_step(request->app.get(), request->undo);
     if (!renamed)
         notify_file_error(request->app.get(), "Could not rename item", G_FILE(source), error);
     else if (request->keep_selected)
@@ -88,6 +96,7 @@ static void commit_name(RenameEditor &editor, bool restore_focus)
     {
         auto *grid = GTK_GRID_VIEW(gtk_widget_get_ancestor(entry, GTK_TYPE_GRID_VIEW));
         auto *request = new RenameRequest{retain(grid), retain(G_APPLICATION(gtk_window_get_application(window))), restore_focus};
+        request->undo = begin_undo_step(request->app.get());
         ObjectPtr<GTask> task{g_task_new(item_file(info), nullptr, rename_finished, request)};
         g_task_set_task_data(task.get(), g_strdup(name), g_free);
         g_task_run_in_thread(task.get(), rename_worker);

@@ -75,7 +75,7 @@ private:
     static constexpr auto attributes = "standard::name,standard::display-name,standard::edit-name,standard::icon,"
                                        "standard::type,standard::is-hidden,standard::is-symlink,standard::symlink-target,"
                                        "standard::content-type,standard::size,access::can-read,"
-                                       "time::modified,time::modified-nsec";
+                                       "time::modified,time::modified-nsec,id::file,time::created,time::created-nsec";
     ObjectPtr<GtkDirectoryList> scan_;
     ObjectPtr<GFile> folder_;
     ObjectPtr<GSettings> settings_;

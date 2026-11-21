@@ -9,6 +9,7 @@ StartLimitBurst=3
 [Service]
 Type=exec
 ExecStart="@dicons_executable@"
+KillMode=process
 Restart=on-failure
 RestartSec=2s
 

@@ -5,6 +5,7 @@
 
 // Borrowed from grid model until its contents change
 std::vector<GFile *> selected_files(GtkSelectionModel *selection);
+GdkContentProvider *selected_file_content(GtkSelectionModel *selection);
 enum class ArrivalAction
 {
     select,

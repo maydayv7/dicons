@@ -2,20 +2,54 @@
 #include "desktop_directory.hpp"
 #include "inline_rename.hpp"
 
-std::vector<GFile *> selected_files(GtkSelectionModel *selection)
+static void for_each_selected_file(GtkSelectionModel *selection, const auto &visit)
 {
     g_autoptr(GtkBitset) selected = gtk_selection_model_get_selection(selection);
-    std::vector<GFile *> files;
     GtkBitsetIter iter;
     guint position;
     for (gboolean valid = gtk_bitset_iter_init_first(&iter, selected, &position);
          valid; valid = gtk_bitset_iter_next(&iter, &position))
     {
         ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(G_LIST_MODEL(selection), position))};
-        if (item_file(info.get()) && !is_trash_icon(info.get()))
-            files.push_back(item_file(info.get()));
+        if (auto *file = item_file(info.get()); file && !is_trash_icon(info.get()))
+            visit(file, info.get());
     }
+}
+
+std::vector<GFile *> selected_files(GtkSelectionModel *selection)
+{
+    std::vector<GFile *> files;
+    for_each_selected_file(selection, [&](GFile *file, GFileInfo *)
+                           { files.push_back(file); });
     return files;
+}
+
+GdkContentProvider *selected_file_content(GtkSelectionModel *selection)
+{
+    bool contains_symlink = false;
+    std::vector<GFile *> files;
+    for_each_selected_file(selection, [&](GFile *file, GFileInfo *info)
+                           {
+                               files.push_back(file);
+                               contains_symlink |= g_file_info_get_is_symlink(info); });
+    if (files.empty())
+        return nullptr;
+    if (contains_symlink)
+    {
+        g_autoptr(GString) uris = g_string_new(nullptr);
+        for (auto *file : files)
+        {
+            g_autofree char *uri = g_file_get_uri(file);
+            g_string_append(uris, uri);
+            g_string_append(uris, "\r\n");
+        }
+        g_autoptr(GBytes) bytes = g_string_free_to_bytes(g_steal_pointer(&uris));
+        return gdk_content_provider_new_for_bytes("text/uri-list", bytes);
+    }
+    g_auto(GValue) value = G_VALUE_INIT;
+    g_value_init(&value, GDK_TYPE_FILE_LIST);
+    g_value_take_boxed(&value, gdk_file_list_new_from_array(files.data(), files.size()));
+    return gdk_content_provider_new_for_value(&value);
 }
 
 namespace

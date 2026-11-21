@@ -1,3 +1,4 @@
+#include "undo.hpp"
 #include "context_menu.hpp"
 #include "create_item.hpp"
 #include "desktop_directory.hpp"
@@ -170,11 +171,20 @@ void attach_context_menu(GtkWindow *window, GtkGridView *grid, const DesktopDire
          "s"},
     };
     g_action_map_add_action_entries(G_ACTION_MAP(group), actions, G_N_ELEMENTS(actions), menu);
-    g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(directory.show_hidden.get()));
-    g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(directory.show_thumbnails.get()));
-    g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(directory.trash.visible.get()));
+    auto add_view_action = [&](GSimpleActionGroup *to, GAction *action)
+    {
+        auto proxy = undoable_view_action(action, G_APPLICATION(menu->app), directory.preferences.get(), G_ACTION(directory.show_hidden.get()));
+        g_action_map_add_action(G_ACTION_MAP(to), proxy.get());
+    };
+    add_view_action(group, G_ACTION(directory.show_hidden.get()));
+    add_view_action(group, directory.show_thumbnails.get());
+    add_view_action(group, directory.trash.visible.get());
     gtk_widget_insert_action_group(desktop, "desktop", G_ACTION_GROUP(group));
-    gtk_widget_insert_action_group(desktop, "sort", G_ACTION_GROUP(directory.sorting.actions.get()));
+    ObjectPtr<GSimpleActionGroup> sorting{g_simple_action_group_new()};
+    g_auto(GStrv) names = g_action_group_list_actions(G_ACTION_GROUP(directory.sorting.actions.get()));
+    for (char **name = names; *name; ++name)
+        add_view_action(sorting.get(), g_action_map_lookup_action(G_ACTION_MAP(directory.sorting.actions.get()), *name));
+    gtk_widget_insert_action_group(desktop, "sort", G_ACTION_GROUP(sorting.get()));
 
     auto *click = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_SECONDARY);

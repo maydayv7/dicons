@@ -9,6 +9,7 @@
 - [x] Update icons when files are added, removed, renamed, or edited
 - [x] Drag and Drop files from/to the Desktop
 - [x] Drag icons or a selection to free grid cells
+- [x] Drop desktop files onto a folder to move them inside
 - [x] Mirror on connected monitors
 - [x] Rename files and move to Trash
 - [x] Right-click context menu, create Templates
@@ -30,7 +31,7 @@
 | Esc               | Clear the selection                                           |
 | F2                | Edit the filename. Enter or clicking away saves. Esc cancels. |
 | Delete            | Move all selected items to Trash                              |
-| Ctrl Z            | Undo last Delete                                              |
+| Ctrl Z            | Undo last action                                              |
 
 ## Supported Desktops
 
@@ -105,7 +106,7 @@ sort-field='name'  # name/type/modified/size
 sort-direction='ascending'  # ascending/descending
 ```
 
-**Show Hidden Items** and **Ctrl+H** apply only to the current session.
+**Show Hidden Items** (Ctrl H) applies only to the current session.
 
 ### Settings without dconf
 

@@ -1,3 +1,4 @@
+#include "undo.hpp"
 #include "keyboard.hpp"
 #include "trash_actions.hpp"
 #include "selection_actions.hpp"
@@ -5,10 +6,12 @@
 
 #include <algorithm>
 
-static void zoom(GSettings *settings, int step)
+static void zoom(GtkWidget *widget, GSettings *settings, int step)
 {
     int size = g_settings_get_int(settings, "icon-size");
-    g_settings_set_int(settings, "icon-size", std::clamp(size + step * 8, 24, 128));
+    auto *app = gtk_window_get_application(GTK_WINDOW(gtk_widget_get_root(widget)));
+    change_view(G_APPLICATION(app), settings, nullptr, [&]
+                { g_settings_set_int(settings, "icon-size", std::clamp(size + step * 8, 24, 128)); });
 }
 
 static gboolean key_pressed(GtkEventControllerKey *controller, guint key, guint, GdkModifierType state, GtkGridView *grid)
@@ -27,12 +30,12 @@ static gboolean key_pressed(GtkEventControllerKey *controller, guint key, guint,
     {
         if (key == GDK_KEY_plus || key == GDK_KEY_KP_Add || (key == GDK_KEY_equal && modifiers == GDK_CONTROL_MASK))
         {
-            zoom(settings, 1);
+            zoom(GTK_WIDGET(grid), settings, 1);
             return true;
         }
         if (modifiers == GDK_CONTROL_MASK && (key == GDK_KEY_minus || key == GDK_KEY_KP_Subtract))
         {
-            zoom(settings, -1);
+            zoom(GTK_WIDGET(grid), settings, -1);
             return true;
         }
     }
@@ -40,7 +43,7 @@ static gboolean key_pressed(GtkEventControllerKey *controller, guint key, guint,
     auto *selection = gtk_grid_view_get_model(grid);
     if (modifiers == GDK_CONTROL_MASK && gdk_keyval_to_lower(key) == GDK_KEY_z)
     {
-        undo_trash(grid);
+        undo_latest(G_APPLICATION(gtk_window_get_application(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(grid))))), grid);
         return true;
     }
     if (modifiers == GDK_CONTROL_MASK && gdk_keyval_to_lower(key) == GDK_KEY_h)
@@ -72,7 +75,7 @@ static gboolean scroll_zoom(GtkEventControllerScroll *controller, double, double
     auto mods = gtk_event_controller_get_current_event_state(event) & gtk_accelerator_get_default_mod_mask();
     if (mods != GDK_CONTROL_MASK || !dy)
         return false;
-    zoom(settings, dy < 0 ? 1 : -1);
+    zoom(gtk_event_controller_get_widget(event), settings, dy < 0 ? 1 : -1);
     return true;
 }
 

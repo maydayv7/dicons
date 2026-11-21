@@ -1,3 +1,4 @@
+#include "undo.hpp"
 #include "trash_actions.hpp"
 #include "desktop_directory.hpp"
 #include "grid_selection.hpp"
@@ -11,29 +12,24 @@ namespace
 {
     struct Request
     {
-        bool undo{};
+        UndoToken undo;
         ObjectPtr<GtkGridView> grid;
         std::vector<ObjectPtr<GFile>> files;
         std::function<void(bool)> finished;
+        std::shared_ptr<const DragIdentities> identities;
         std::vector<TrashedFile> entries;
-        std::vector<ObjectPtr<GFile>> restored;
         struct Error
         {
             const char *title;
             std::string detail;
         };
         std::vector<Error> errors;
-        bool moved{};
     };
 
     struct History
     {
         std::deque<Request> queue;
         FileSet pending = make_file_set();
-        std::vector<TrashedFile> last;
-        GWeakRef origin;
-        History() { g_weak_ref_init(&origin, nullptr); }
-        ~History() { g_weak_ref_clear(&origin); }
     };
 
     History &history(GApplication *app)
@@ -54,42 +50,22 @@ namespace
         request.errors.push_back({title, std::string{name} + "\n" + message});
     }
 
-    bool restore_item(Request &request, const TrashedFile &entry)
-    {
-        g_autoptr(GError) error = nullptr;
-        auto destination = restore_from_trash(entry, &error);
-        if (error)
-            record_error(request, "Could not fully restore item", entry.original.get(), error->message);
-        if (!destination)
-            return false;
-        request.restored.push_back(std::move(destination));
-        return true;
-    }
-
     void work(GTask *task, gpointer, gpointer data, GCancellable *)
     {
         auto &request = *static_cast<Request *>(data);
-        if (request.undo)
+        for (const auto &file : request.files)
         {
-            std::erase_if(request.entries, [&request](const TrashedFile &entry)
-                          { return restore_item(request, entry); });
-        }
-        else
-        {
-            for (const auto &file : request.files)
+            TrashedFile entry;
+            g_autoptr(GError) error = nullptr;
+            if ((request.identities && !matches_drag_source(*request.identities, file.get(), &error)) ||
+                !move_to_trash(file.get(), entry, &error))
+                record_error(request, "Could not move item to Trash", file.get(), error->message);
+            else
             {
-                TrashedFile entry;
-                g_autoptr(GError) error = nullptr;
-                if (!move_to_trash(file.get(), entry, &error))
-                    record_error(request, "Could not move item to Trash", file.get(), error->message);
+                if (entry.stored)
+                    request.entries.push_back(std::move(entry));
                 else
-                {
-                    request.moved = true;
-                    if (entry.stored)
-                        request.entries.push_back(std::move(entry));
-                    else
-                        record_error(request, "Undo unavailable", file.get(), "Moved to Trash, but its location could not be recorded.");
-                }
+                    record_error(request, "Undo unavailable", file.get(), "Moved to Trash, but its location could not be recorded.");
             }
         }
         g_task_return_boolean(task, true);
@@ -102,34 +78,11 @@ namespace
         auto *app = G_APPLICATION(source);
         auto &state = history(app);
         auto &request = state.queue.front();
-        if (request.undo)
-        {
-            state.last = std::move(request.entries);
-            auto *grid = request.grid.get();
-            if (grid && gtk_widget_get_root(GTK_WIDGET(grid)))
-            {
-                ObjectPtr<GFile> desktop{g_file_new_for_path(g_get_user_special_dir(G_USER_DIRECTORY_DESKTOP))};
-                bool first = true;
-                for (const auto &file : request.restored)
-                    if (g_file_has_parent(file.get(), desktop.get()))
-                    {
-                        if (first)
-                            gtk_selection_model_unselect_all(gtk_grid_view_get_model(grid));
-                        select_when_listed(grid, file.get());
-                        first = false;
-                    }
-            }
-        }
-        else
-        {
-            for (const auto &file : request.files)
-                g_hash_table_remove(state.pending.get(), file.get());
-            if (request.moved)
-            {
-                state.last = std::move(request.entries);
-                g_weak_ref_set(&state.origin, request.grid.get());
-            }
-        }
+        for (const auto &file : request.files)
+            g_hash_table_remove(state.pending.get(), file.get());
+        for (auto &entry : request.entries)
+            remember_trash(request.undo, std::move(entry));
+        finish_undo_step(app, request.undo);
         for (const auto &error : request.errors)
             notify_error(app, error.title, error.detail.c_str());
         if (request.finished)
@@ -144,11 +97,6 @@ namespace
         if (state.queue.empty())
             return;
         auto &request = state.queue.front();
-        if (request.undo)
-        {
-            request.entries = std::move(state.last);
-            request.grid.reset(GTK_GRID_VIEW(g_weak_ref_get(&state.origin)));
-        }
         ObjectPtr<GTask> task{g_task_new(app, nullptr, completed, nullptr)};
         g_task_set_task_data(task.get(), &request, nullptr);
         g_task_run_in_thread(task.get(), work);
@@ -161,11 +109,12 @@ namespace
     }
 }
 
-void trash_files(GtkGridView *origin, const std::vector<GFile *> &files, std::function<void(bool)> finished)
+void trash_files(GtkGridView *origin, const std::vector<GFile *> &files, std::function<void(bool)> finished,
+                 std::shared_ptr<const DragIdentities> identities)
 {
     auto *app = application(origin);
     auto &state = history(app);
-    Request request{.grid = retain(origin), .finished = std::move(finished)};
+    Request request{.grid = retain(origin), .finished = std::move(finished), .identities = std::move(identities)};
     for (auto *file : files)
         if (g_hash_table_add(state.pending.get(), g_object_ref(file)))
             request.files.push_back(retain(file));
@@ -175,18 +124,8 @@ void trash_files(GtkGridView *origin, const std::vector<GFile *> &files, std::fu
             request.finished(false);
         return;
     }
+    request.undo = begin_undo_step(app);
     state.queue.push_back(std::move(request));
-    if (state.queue.size() == 1)
-        start(app);
-}
-
-void undo_trash(GtkGridView *grid)
-{
-    auto *app = application(grid);
-    auto &state = history(app);
-    if (state.queue.empty() && state.last.empty())
-        return;
-    state.queue.push_back(Request{.undo = true});
     if (state.queue.size() == 1)
         start(app);
 }

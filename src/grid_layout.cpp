@@ -16,7 +16,7 @@ IconPositions read_positions(GSettings *settings)
     return result;
 }
 
-static bool write_positions(GSettings *settings, const IconPositions &positions)
+bool write_positions(GSettings *settings, const IconPositions &positions)
 {
     GVariantBuilder builder;
     g_variant_builder_init(&builder, G_VARIANT_TYPE("a{s(uu)}"));

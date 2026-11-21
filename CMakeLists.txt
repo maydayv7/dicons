@@ -63,6 +63,7 @@ add_library(
     src/trash_icon.cpp
     src/trash_file.cpp
     src/trash_actions.cpp
+    src/undo.cpp
     src/transfer.cpp
     src/copy.cpp
 )
@@ -93,10 +94,14 @@ if(BUILD_TESTING)
     endfunction()
     dicons_test(copy copy.cpp)
     dicons_test(rename rename.cpp)
+    dicons_test(folder-drop folder_drop.cpp)
+    dicons_test(launch launch.cpp)
     dicons_test(directory desktop_directory.cpp)
     set_tests_properties(desktop-directory PROPERTIES ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
     dicons_test(thumbnails thumbnails.cpp)
     dicons_test(trash trash.cpp)
+    dicons_test(undo undo.cpp)
+    set_tests_properties(desktop-undo PROPERTIES ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
 endif()
 
 install(TARGETS dicons RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
