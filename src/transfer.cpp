@@ -39,6 +39,8 @@ namespace
         bool keep_both{};
         bool copied{};
         bool to_trash{};
+        PasteFinished paste_finished;
+        std::vector<ObjectPtr<GFile>> remaining;
     };
 }
 
@@ -64,6 +66,8 @@ static void transfer_worker(GTask *task, gpointer, gpointer data, GCancellable *
         return;
     }
     auto *target = transfer->folder ? transfer->folder.get() : transfer->site.desktop.get();
+    if (transfer->paste_finished && !transfer->move && g_file_has_parent(source, target))
+        transfer->keep_both = true;
     auto destination = transfer->move ? move_into_folder(source, target, transfer->keep_both, &error)
                                       : desktop_copy_item(source, target, transfer->stage.get(), transfer->keep_both, &error);
     if (destination)
@@ -71,7 +75,10 @@ static void transfer_worker(GTask *task, gpointer, gpointer data, GCancellable *
         if (transfer->move && g_file_equal(destination.get(), source))
             transfer->complete = false;
         else if (transfer->move)
-            remember_file(transfer->undo, destination.get(), source);
+        {
+            g_autofree char *uri = g_file_get_uri(source);
+            remember_file(transfer->undo, destination.get(), source, transfer->source_identities->at(uri));
+        }
         else
             remember_file(transfer->undo, destination.get());
         g_task_return_pointer(task, destination.release(), g_object_unref);
@@ -82,8 +89,10 @@ static void transfer_worker(GTask *task, gpointer, gpointer data, GCancellable *
 
 static void next_item(Transfer *transfer);
 
-static void advance(Transfer *transfer)
+static void advance(Transfer *transfer, bool transferred)
 {
+    if (transfer->paste_finished && transfer->move && !transferred)
+        transfer->remaining.push_back(retain(transfer->files.front().get()));
     transfer->files.pop_front();
     transfer->keep_both = false;
     next_item(transfer);
@@ -119,14 +128,14 @@ static void transfer_finished(GObject *, GAsyncResult *result, gpointer data)
                     next_item(transfer);
                 } else {
                     transfer->complete = false;
-                    advance(transfer);
+                    advance(transfer, false);
                 } });
             return;
         }
         transfer->complete = false;
         notify_file_error(transfer->app.get(), transfer->move ? "Could not move item" : "Could not copy item", file, error);
     }
-    advance(transfer);
+    advance(transfer, destination && !g_file_equal(destination, transfer->files.front().get()));
 }
 
 static void next_item(Transfer *transfer)
@@ -144,28 +153,49 @@ static void next_item(Transfer *transfer)
     finish_undo_step(transfer->app.get(), transfer->undo);
     if (transfer->drop)
         gdk_drop_finish(transfer->drop.get(), transfer->complete ? transfer->action : GdkDragAction{});
+    if (transfer->paste_finished)
+    {
+        std::vector<GFile *> remaining;
+        for (const auto &file : transfer->remaining)
+            remaining.push_back(file.get());
+        transfer->paste_finished(remaining);
+    }
     delete transfer;
 }
 
-static bool prepare_transfer(Transfer &transfer, const GValue *value)
+static void begin_transfer(std::unique_ptr<Transfer> transfer)
 {
-    auto *list = static_cast<GdkFileList *>(g_value_get_boxed(value));
-    GSList *files = gdk_file_list_get_files(list);
-    if (!files)
+    if (transfer->files.empty())
+        notify_error(transfer->app.get(), "Could not transfer files", "The file list was empty.");
+    else if (!transfer->move)
+        transfer->stage = make_copy_stage(transfer->folder ? transfer->folder.get() : transfer->site.desktop.get(), transfer->site.staging.get(), transfer->app.get());
+    if (transfer->files.empty() || (!transfer->move && !transfer->stage))
     {
-        notify_error(transfer.app.get(), "Could not receive dropped files", "The file list was empty.");
-        return false;
+        if (transfer->drop)
+            gdk_drop_finish(transfer->drop.get(), GdkDragAction{});
+        return;
     }
+    transfer->undo = begin_undo_step(transfer->app.get());
+    if (transfer->drop && transfer->action == GDK_ACTION_COPY)
+    {
+        gdk_drop_finish(transfer->drop.get(), GDK_ACTION_COPY);
+        transfer->drop.reset();
+    }
+    next_item(transfer.release());
+}
 
-    if (!transfer.move)
-    {
-        transfer.stage = make_copy_stage(transfer.folder ? transfer.folder.get() : transfer.site.desktop.get(), transfer.site.staging.get(), transfer.app.get());
-        if (!transfer.stage)
-            return false;
-    }
-    for (GSList *link = files; link; link = link->next)
-        transfer.files.push_back(retain(G_FILE(link->data)));
-    return true;
+void transfer_pasted_files(GtkGridView *grid, GFile *folder, const DropIdentity &target, const std::vector<GFile *> &files,
+                           bool move, std::shared_ptr<const DragIdentities> identities, PasteFinished finished)
+{
+    auto *window = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(grid)));
+    if (!window || files.empty())
+        return;
+    auto *site = static_cast<DropSite *>(g_object_get_data(G_OBJECT(gtk_grid_view_get_model(grid)), "drop-site"));
+    auto transfer = std::unique_ptr<Transfer>{new Transfer{
+        .grid = retain(grid), .app = retain(G_APPLICATION(gtk_window_get_application(window))), .site = *site, .folder = folder ? retain(folder) : ObjectPtr<GFile>{}, .move = move, .target_identity = target, .source_identities = std::move(identities), .paste_finished = std::move(finished)}};
+    for (auto *file : files)
+        transfer->files.push_back(retain(file));
+    begin_transfer(std::move(transfer));
 }
 
 static void receive_files(Transfer *data, const GValue *value, GError *error)
@@ -200,19 +230,10 @@ static void receive_files(Transfer *data, const GValue *value, GError *error)
             g_object_unref(drop); }, transfer->source_identities);
         return;
     }
-    if (!prepare_transfer(*transfer, value))
-    {
-        gdk_drop_finish(drop, GdkDragAction{});
-        return;
-    }
-    transfer->undo = begin_undo_step(transfer->app.get());
-    // Keep a MOVE offer alive until the files have actually moved
-    if (transfer->action == GDK_ACTION_COPY)
-    {
-        gdk_drop_finish(drop, GDK_ACTION_COPY);
-        transfer->drop.reset();
-    }
-    next_item(transfer.release());
+    auto *list = static_cast<GdkFileList *>(g_value_get_boxed(value));
+    for (auto *link = gdk_file_list_get_files(list); link; link = link->next)
+        transfer->files.push_back(retain(G_FILE(link->data)));
+    begin_transfer(std::move(transfer));
 }
 
 static void files_received(GObject *source, GAsyncResult *result, gpointer data)

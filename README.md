@@ -1,6 +1,10 @@
-# Wayland Desktop Icons
-
-> Show Files on the Desktop
+<p align="center">
+  <img src="data/dicons.svg" width="112" height="112" alt=""></br>
+  Wayland Desktop Icons</br>
+  <a href="#getting-started">Installation</a> ·
+  <a href="#keyboard-shortcuts">Keyboard shortcuts</a> ·
+  <a href="#configuration">Configuration</a>
+</p>
 
 ## Features
 
@@ -16,7 +20,7 @@
 - [x] Sort icons by name, modification time, size, or file type
 - [x] Image and document thumbnails
 - [x] Trash icon
-- [ ] Clipboard copy and paste
+- [x] Clipboard copy and paste
 
 ### Keyboard shortcuts
 
@@ -31,6 +35,8 @@
 | Esc               | Clear the selection                                           |
 | F2                | Edit the filename. Enter or clicking away saves. Esc cancels. |
 | Delete            | Move all selected items to Trash                              |
+| Ctrl C / Ctrl X   | Copy or cut the selected files                                |
+| Ctrl V            | Paste files onto the desktop                                  |
 | Ctrl Z            | Undo the last action                                          |
 
 ## Supported Desktops

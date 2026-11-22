@@ -76,5 +76,6 @@ namespace
 
 int main(int argc, char **argv)
 {
+    g_set_prgname(desktop_app_id);
     return DesktopApplication{}.run(argc, argv);
 }

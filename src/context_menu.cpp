@@ -1,6 +1,7 @@
 #include "undo.hpp"
 #include "context_menu.hpp"
 #include "create_item.hpp"
+#include "clipboard.hpp"
 #include "desktop_directory.hpp"
 #include "launch.hpp"
 #include "icon_grid.hpp"
@@ -19,14 +20,12 @@ namespace
     };
 }
 
-static void append_terminal(GMenu *menu, GFile *folder)
+static void append_terminal(GMenu *section, GFile *folder)
 {
     g_autofree char *uri = g_file_get_uri(folder);
     g_autoptr(GMenuItem) item = g_menu_item_new("Open in Terminal", nullptr);
     g_menu_item_set_action_and_target(item, "desktop.terminal", "s", uri);
-    g_autoptr(GMenu) terminal = g_menu_new();
-    g_menu_append_item(terminal, item);
-    g_menu_append_section(menu, nullptr, G_MENU_MODEL(terminal));
+    g_menu_append_item(section, item);
 }
 
 static ObjectPtr<GMenu> background_menu(GFile *folder)
@@ -37,13 +36,16 @@ static ObjectPtr<GMenu> background_menu(GFile *folder)
     g_menu_append(create, "Blank File", "desktop.blank");
     append_templates(create);
     g_menu_append_submenu(menu.get(), "Create New", G_MENU_MODEL(create));
+    g_menu_append(menu.get(), "Paste", "desktop.paste");
     append_sort_menu(menu.get());
     g_autoptr(GMenu) display = g_menu_new();
     g_menu_append(display, "Show Hidden Items", "desktop.show-hidden");
     g_menu_append(display, "Show Thumbnails", "desktop.show-thumbnails");
     g_menu_append(display, "Show Trash", "desktop.show-trash");
     g_menu_append_section(menu.get(), nullptr, G_MENU_MODEL(display));
-    append_terminal(menu.get(), folder);
+    g_autoptr(GMenu) terminal = g_menu_new();
+    append_terminal(terminal, folder);
+    g_menu_append_section(menu.get(), nullptr, G_MENU_MODEL(terminal));
     return menu;
 }
 
@@ -51,19 +53,32 @@ static ObjectPtr<GMenu> icon_menu(GtkSelectionModel *selection, GFileInfo *info)
 {
     ObjectPtr<GMenu> menu{g_menu_new()};
     g_autoptr(GtkBitset) selected = gtk_selection_model_get_selection(selection);
-    if (gtk_bitset_get_size(selected) == 1)
+    const bool single = gtk_bitset_get_size(selected) == 1;
+    const bool folder = single && g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY;
+    if (single)
     {
         if (is_trash_icon(info))
         {
             g_menu_append(menu.get(), "Open Trash", "desktop.open");
             return menu;
         }
-        g_menu_append(menu.get(), "Open", "desktop.open");
-        if (g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY)
-            append_terminal(menu.get(), item_file(info));
-        g_menu_append(menu.get(), "Rename", "desktop.rename");
+        g_autoptr(GMenu) open = g_menu_new();
+        g_menu_append(open, "Open", "desktop.open");
+        if (folder)
+            append_terminal(open, item_file(info));
+        g_menu_append_section(menu.get(), nullptr, G_MENU_MODEL(open));
     }
-    g_menu_append(menu.get(), "Move to Trash", "desktop.trash");
+    g_autoptr(GMenu) edit = g_menu_new();
+    g_menu_append(edit, "Cut", "desktop.cut");
+    g_menu_append(edit, "Copy", "desktop.copy");
+    if (folder)
+        g_menu_append(edit, "Paste Into Folder", "desktop.paste-into");
+    if (single)
+        g_menu_append(edit, "Rename", "desktop.rename");
+    g_menu_append_section(menu.get(), nullptr, G_MENU_MODEL(edit));
+    g_autoptr(GMenu) trash = g_menu_new();
+    g_menu_append(trash, "Move to Trash", "desktop.trash");
+    g_menu_append_section(menu.get(), nullptr, G_MENU_MODEL(trash));
     return menu;
 }
 
@@ -141,6 +156,14 @@ void attach_context_menu(GtkWindow *window, GtkGridView *grid, const DesktopDire
     g_autoptr(GSimpleActionGroup) group = g_simple_action_group_new();
     const GActionEntry actions[] = {
         {"open", open_selection},
+        {"copy", +[](GSimpleAction *, GVariant *, gpointer data)
+                 { copy_selection(static_cast<DesktopMenu *>(data)->grid, false); }},
+        {"cut", +[](GSimpleAction *, GVariant *, gpointer data)
+                { copy_selection(static_cast<DesktopMenu *>(data)->grid, true); }},
+        {"paste", +[](GSimpleAction *, GVariant *, gpointer data)
+                  { paste_selection(static_cast<DesktopMenu *>(data)->grid, false); }},
+        {"paste-into", +[](GSimpleAction *, GVariant *, gpointer data)
+                       { paste_selection(static_cast<DesktopMenu *>(data)->grid, true); }},
         {"rename", +[](GSimpleAction *, GVariant *, gpointer data)
                    { rename_selection(static_cast<DesktopMenu *>(data)->grid); }},
         {"trash", +[](GSimpleAction *, GVariant *, gpointer data)
@@ -171,6 +194,15 @@ void attach_context_menu(GtkWindow *window, GtkGridView *grid, const DesktopDire
          "s"},
     };
     g_action_map_add_action_entries(G_ACTION_MAP(group), actions, G_N_ELEMENTS(actions), menu);
+    auto *clipboard = gtk_widget_get_clipboard(GTK_WIDGET(grid));
+    auto update_paste = +[](GdkClipboard *source, GSimpleAction *action)
+    { g_simple_action_set_enabled(action, clipboard_has_files(source)); };
+    for (auto name : {"paste", "paste-into"})
+    {
+        auto *action = G_SIMPLE_ACTION(g_action_map_lookup_action(G_ACTION_MAP(group), name));
+        g_signal_connect_object(clipboard, "changed", G_CALLBACK(update_paste), action, GConnectFlags{});
+        update_paste(clipboard, action);
+    }
     auto add_view_action = [&](GSimpleActionGroup *to, GAction *action)
     {
         auto proxy = undoable_view_action(action, G_APPLICATION(menu->app), directory.preferences.get(), G_ACTION(directory.show_hidden.get()));

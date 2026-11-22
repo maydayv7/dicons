@@ -16,12 +16,12 @@ namespace
     struct FileChange
     {
         ObjectPtr<GFile> current, original;
-        DropIdentity item, parent;
+        DropIdentity item, parent, previous;
     };
     struct Restored
     {
         ObjectPtr<GFile> original, actual;
-        DropIdentity identity;
+        DropIdentity previous, current;
     };
     using Change = std::variant<FileChange, TrashedFile>;
 
@@ -93,7 +93,7 @@ UndoToken begin_undo_step(GApplication *app)
     return step;
 }
 
-void remember_file(const UndoToken &step, GFile *result, GFile *original)
+void remember_file(const UndoToken &step, GFile *result, GFile *original, DropIdentity previous)
 {
     if (original && g_file_equal(result, original))
         return;
@@ -101,6 +101,7 @@ void remember_file(const UndoToken &step, GFile *result, GFile *original)
     if (original)
     {
         change.original = retain(original);
+        change.previous = previous.id.empty() ? change.item : std::move(previous);
         ObjectPtr<GFile> parent{g_file_get_parent(original)};
         change.parent = file_identity(parent.get(), G_FILE_QUERY_INFO_NONE);
     }
@@ -177,7 +178,7 @@ static void undo_files(GTask *task, gpointer, gpointer data, GCancellable *)
             {
                 ObjectPtr<GFile> parent{g_file_get_parent(change.original.get())};
                 if (change.parent.matches(parent.get(), G_FILE_QUERY_INFO_NONE, &raw) &&
-                    rename_no_replace(file, change.original.get(), &raw))
+                    rename_no_replace(file, change.original.get(), &raw, true))
                 {
                     done = true;
                     restored = retain(change.original.get());
@@ -195,7 +196,8 @@ static void undo_files(GTask *task, gpointer, gpointer data, GCancellable *)
             auto now = file_identity(restored.get());
             auto original = std::visit([](const auto &item)
                                        { return retain(item.original.get()); }, step.files[i]);
-            step.restored.push_back({std::move(original), std::move(restored), std::move(now)});
+            auto *change = std::get_if<FileChange>(&step.files[i]);
+            step.restored.push_back({std::move(original), std::move(restored), change ? change->previous : now, now});
         }
         if (done)
             step.files.erase(step.files.begin() + i);
@@ -238,7 +240,7 @@ static void undo_finished(GObject *source, GAsyncResult *, gpointer)
                 select_when_listed(step->grid.get(), item.actual.get());
             }
         }
-        if (!g_file_equal(item.original.get(), item.actual.get()))
+        if (item.previous != item.current || !g_file_equal(item.original.get(), item.actual.get()))
         {
             auto remap = std::make_shared<Restored>(std::move(item));
             auto rebind = [&](const UndoToken &older)
@@ -285,8 +287,11 @@ static void rebind_file(Change &file, const Restored &mapping)
                { rebind_child(item.original, mapping); }, file);
     if (auto *change = std::get_if<FileChange>(&file))
     {
-        if (change->item == mapping.identity && g_file_equal(change->current.get(), mapping.original.get()))
+        if (change->item == mapping.previous && g_file_equal(change->current.get(), mapping.original.get()))
+        {
             change->current = retain(mapping.actual.get());
+            change->item = mapping.current;
+        }
         else
             rebind_child(change->current, mapping);
     }

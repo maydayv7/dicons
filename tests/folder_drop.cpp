@@ -4,6 +4,8 @@
 #include "trash_file.hpp"
 
 #include <barrier>
+#include <csignal>
+#include <sys/resource.h>
 #include <filesystem>
 #include <fstream>
 #include <sys/stat.h>
@@ -355,23 +357,57 @@ static void cross_filesystem()
     fs::create_symlink("missing", f.desktop / "link");
     for (bool keep_both : {false, true})
     {
-        for (auto name : {"item.txt", "Folder", "link"})
-        {
-            g_autoptr(GError) error = nullptr;
-            g_assert_null(f.move(f.desktop / name, target, keep_both, &error));
-            g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
-        }
+        g_autoptr(GError) error = nullptr;
+        g_assert_null(f.move(f.folder, target, keep_both, &error));
+        g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
     }
-    g_assert_true(contents(f.desktop / "item.txt") == "original");
     g_assert_true(contents(f.folder / "child") == "child");
-    g_assert_true(fs::read_symlink(f.desktop / "link") == "missing");
     g_assert_true(fs::is_empty(target));
     std::ofstream(target / "item.txt") << "existing";
     g_autoptr(GError) error = nullptr;
     g_assert_null(f.move(f.desktop / "item.txt", target, false, &error));
-    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_EXISTS);
+    g_clear_error(&error);
+    g_assert_nonnull(f.move(f.desktop / "item.txt", target, true, &error));
+    g_assert_no_error(error);
     g_assert_true(contents(target / "item.txt") == "existing");
-    g_assert_true(contents(f.desktop / "item.txt") == "original");
+    g_assert_true(contents(target / "item (1).txt") == "original");
+    g_assert_false(fs::exists(f.desktop / "item.txt"));
+    g_assert_nonnull(f.move(f.desktop / "link", target, false, &error));
+    g_assert_no_error(error);
+    g_assert_true(fs::read_symlink(target / "link") == "missing");
+    g_assert_false(fs::is_symlink(f.desktop / "link"));
+
+    auto source = f.desktop / "large";
+    const std::string data(65536, 'x');
+    std::ofstream(source) << data;
+    auto empty = target / "failures";
+    fs::create_directory(empty);
+    struct rlimit limit{};
+    g_assert_cmpint(getrlimit(RLIMIT_FSIZE, &limit), ==, 0);
+    auto old_handler = std::signal(SIGXFSZ, SIG_IGN);
+    auto restricted = limit;
+    restricted.rlim_cur = std::min<rlim_t>(4096, limit.rlim_cur);
+    g_assert_cmpint(setrlimit(RLIMIT_FSIZE, &restricted), ==, 0);
+    auto failed = f.move(source, empty, false, &error);
+    g_assert_cmpint(setrlimit(RLIMIT_FSIZE, &limit), ==, 0);
+    std::signal(SIGXFSZ, old_handler);
+    g_assert_null(failed);
+    g_assert_nonnull(error);
+    g_clear_error(&error);
+    g_assert_true(contents(source) == data);
+    g_assert_true(fs::is_empty(empty));
+    if (getuid() != 0)
+    {
+        fs::permissions(f.desktop, fs::perms::owner_read | fs::perms::owner_exec);
+        failed = f.move(source, empty, false, &error);
+        fs::permissions(f.desktop, fs::perms::owner_all);
+        g_assert_null(failed);
+        g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+        g_clear_error(&error);
+        g_assert_true(fs::is_empty(empty));
+        g_assert_true(contents(source) == data);
+    }
 
     auto stage = target / ".stage";
     fs::create_directory(stage);

@@ -2,6 +2,6 @@
 Type=Application
 Name=Desktop Icons
 Exec=dicons
-Icon=folder
+Icon=dev.maydayv7.dicons
 NoDisplay=true
 Terminal=false

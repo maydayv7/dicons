@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <sys/stat.h>
 
 namespace fs = std::filesystem;
 
@@ -272,6 +273,40 @@ static void retry_at_history_limit()
     g_assert_true(fs::exists(f.root / "moved"));
 }
 
+static void cross_device_history()
+{
+    Fixture f;
+    char pattern[] = "/dev/shm/dicons-undo-XXXXXX";
+    struct stat a{}, b{};
+    if (stat(f.root.c_str(), &a) || stat("/dev/shm", &b) || a.st_dev == b.st_dev || !g_mkdtemp_full(pattern, 0700))
+    {
+        g_test_skip("Requires a writable second filesystem");
+        return;
+    }
+    auto settings = desktop_preferences();
+    change_view(f.app.get(), settings.get(), nullptr, [&]
+                { g_settings_set_int(settings.get(), "icon-size", 80); });
+    auto source = f.file("item");
+    ObjectPtr<GFile> dest{g_file_new_build_filename(pattern, "item", nullptr)};
+    std::ofstream(f.root / "item") << "cross device";
+    auto create = begin_undo_step(f.app.get());
+    remember_file(create, source.get());
+    finish_undo_step(f.app.get(), create);
+    auto move = begin_undo_step(f.app.get());
+    auto id = file_identity(source.get());
+    g_assert_true(rename_no_replace(source.get(), dest.get(), nullptr, true));
+    remember_file(move, dest.get(), source.get(), id);
+    finish_undo_step(f.app.get(), move);
+    undo_latest(f.app.get());
+    undo_latest(f.app.get());
+    undo_latest(f.app.get());
+    wait_for([&]
+             { return g_settings_get_int(settings.get(), "icon-size") == 48; });
+    g_assert_false(fs::exists(f.root / "item"));
+    g_assert_true(fs::is_empty(pattern));
+    fs::remove(pattern);
+}
+
 static void views()
 {
     Fixture f;
@@ -342,6 +377,7 @@ int main(int argc, char **argv)
     g_test_add_func("/undo/numbered-folder", numbered_folder_restore);
     g_test_add_func("/undo/history-limit", history_limit);
     g_test_add_func("/undo/retry-at-history-limit", retry_at_history_limit);
+    g_test_add_func("/undo/cross-device", cross_device_history);
     g_test_add_func("/undo/views", views);
     g_test_add_func("/undo/restored-position", restored_position);
     return g_test_run();

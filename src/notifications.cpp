@@ -1,4 +1,5 @@
 #include "notifications.hpp"
+#include "preferences.hpp"
 
 void notify_error(GApplication *app, const char *title, const char *detail)
 {
@@ -9,9 +10,9 @@ void notify_error(GApplication *app, const char *title, const char *detail)
 
     GVariantBuilder hints;
     g_variant_builder_init(&hints, G_VARIANT_TYPE_VARDICT);
-    g_variant_builder_add(&hints, "{sv}", "desktop-entry", g_variant_new_string("dicons"));
+    g_variant_builder_add(&hints, "{sv}", "desktop-entry", g_variant_new_string(desktop_app_id));
     g_autofree char *body = g_markup_escape_text(detail, -1);
-    auto *args = g_variant_new("(susss@asa{sv}i)", "Desktop", 0u, "folder", title, body,
+    auto *args = g_variant_new("(susss@asa{sv}i)", "Desktop", 0u, desktop_app_id, title, body,
                                g_variant_new_strv(nullptr, 0), &hints, -1);
     g_dbus_connection_call(bus, "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
                            "org.freedesktop.Notifications", "Notify", args, G_VARIANT_TYPE("(u)"),

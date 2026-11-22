@@ -25,7 +25,8 @@ find_program(GLIB_COMPILE_SCHEMAS glib-compile-schemas)
 if(NOT GLIB_COMPILE_SCHEMAS)
     message(FATAL_ERROR "glib-compile-schemas is required to build dicons")
 endif()
-set(schema_name dev.maydayv7.dicons.gschema.xml)
+set(dicons_app_id dev.maydayv7.dicons)
+set(schema_name "${dicons_app_id}.gschema.xml")
 add_custom_command(
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gschemas.compiled"
     COMMAND "${GLIB_COMPILE_SCHEMAS}" --strict "--targetdir=${CMAKE_CURRENT_BINARY_DIR}"
@@ -65,6 +66,7 @@ add_library(
     src/trash_actions.cpp
     src/undo.cpp
     src/transfer.cpp
+    src/clipboard.cpp
     src/copy.cpp
 )
 add_dependencies(dicons-core dicons-schemas)
@@ -93,6 +95,7 @@ if(BUILD_TESTING)
         add_test(NAME desktop-${name} COMMAND test-${name})
     endfunction()
     dicons_test(copy copy.cpp)
+    dicons_test(clipboard clipboard.cpp)
     dicons_test(rename rename.cpp)
     dicons_test(folder-drop folder_drop.cpp)
     dicons_test(launch launch.cpp)
@@ -105,7 +108,16 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS dicons RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-install(FILES data/dicons.desktop DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+install(
+    FILES data/dicons.desktop
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
+    RENAME "${dicons_app_id}.desktop"
+)
+install(
+    FILES data/dicons.svg
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
+    RENAME "${dicons_app_id}.svg"
+)
 install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/dicons")
 
 set(unit_bindir "${CMAKE_INSTALL_BINDIR}")

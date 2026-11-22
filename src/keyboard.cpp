@@ -41,6 +41,18 @@ static gboolean key_pressed(GtkEventControllerKey *controller, guint key, guint,
     }
 
     auto *selection = gtk_grid_view_get_model(grid);
+    if (modifiers == GDK_CONTROL_MASK)
+    {
+        switch (gdk_keyval_to_lower(key))
+        {
+        case GDK_KEY_c:
+            return gtk_widget_activate_action(GTK_WIDGET(grid), "desktop.copy", nullptr);
+        case GDK_KEY_x:
+            return gtk_widget_activate_action(GTK_WIDGET(grid), "desktop.cut", nullptr);
+        case GDK_KEY_v:
+            return gtk_widget_activate_action(GTK_WIDGET(grid), "desktop.paste", nullptr);
+        }
+    }
     if (modifiers == GDK_CONTROL_MASK && gdk_keyval_to_lower(key) == GDK_KEY_z)
     {
         undo_latest(G_APPLICATION(gtk_window_get_application(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(grid))))), grid);
