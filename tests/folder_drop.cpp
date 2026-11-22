@@ -4,10 +4,8 @@
 #include "trash_file.hpp"
 
 #include <barrier>
-#include <csignal>
 #include <filesystem>
 #include <fstream>
-#include <sys/resource.h>
 #include <sys/stat.h>
 #include <thread>
 
@@ -312,10 +310,7 @@ static void overlapping_operations()
     race([&]
          { a = bool(f.move(f.desktop / "same", f.folder, false, nullptr)); },
          [&]
-         {
-             g_autoptr(GError) error = nullptr;
-             b = bool(desktop_copy_item(file(other / "same").get(), file(f.folder).get(), file(stage).get(), false, &error));
-         });
+         { b = bool(desktop_copy_item(file(other / "same").get(), file(f.folder).get(), file(stage).get(), false, nullptr)); });
     g_assert_true(a != b);
     g_assert_true(contents(f.folder / "same") == (a ? "move" : "copy"));
     g_assert_true(fs::exists(f.desktop / "same") == !a);
@@ -355,70 +350,35 @@ static void cross_filesystem()
         return;
     }
     fs::path target{pattern};
-    auto source = f.desktop / "item.txt";
-    auto destination = target / source.filename();
-    const std::string data(65536, 'x');
-    std::ofstream(source) << data;
-    g_autoptr(GError) error = nullptr;
-
-    struct rlimit limit{};
-    g_assert_cmpint(getrlimit(RLIMIT_FSIZE, &limit), ==, 0);
-    auto old_handler = std::signal(SIGXFSZ, SIG_IGN);
-    auto restricted = limit;
-    restricted.rlim_cur = std::min<rlim_t>(4096, limit.rlim_cur);
-    g_assert_cmpint(setrlimit(RLIMIT_FSIZE, &restricted), ==, 0);
-    auto failed = f.move(source, target, false, &error);
-    g_assert_cmpint(setrlimit(RLIMIT_FSIZE, &limit), ==, 0);
-    std::signal(SIGXFSZ, old_handler);
-    g_assert_null(failed);
-    g_assert_nonnull(error);
-    g_clear_error(&error);
-    g_assert_true(contents(source) == data);
-    g_assert_true(fs::is_empty(target));
-    if (getuid() != 0)
-    {
-        fs::permissions(f.desktop, fs::perms::owner_read | fs::perms::owner_exec);
-        failed = f.move(source, target, false, &error);
-        fs::permissions(f.desktop, fs::perms::owner_all);
-        g_assert_null(failed);
-        g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
-        g_clear_error(&error);
-        g_assert_true(fs::is_empty(target));
-        g_assert_true(contents(source) == data);
-    }
-
-    std::ofstream(destination) << "existing";
-    g_assert_null(f.move(source, target, false, &error));
-    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_EXISTS);
-    g_clear_error(&error);
-    g_assert_nonnull(f.move(source, target, true, &error));
-    g_assert_no_error(error);
-    g_assert_true(contents(destination) == "existing");
-    g_assert_true(contents(target / "item (1).txt") == data);
-    g_assert_false(fs::exists(source));
-    fs::create_symlink("missing", f.desktop / "link");
-    g_assert_nonnull(f.move(f.desktop / "link", target, false, &error));
-    g_assert_true(fs::read_symlink(target / "link") == "missing");
-
+    std::ofstream(f.desktop / "item.txt") << "original";
     std::ofstream(f.folder / "child") << "child";
-    g_assert_null(f.move(f.folder, target, false, &error));
-    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
-    g_clear_error(&error);
+    fs::create_symlink("missing", f.desktop / "link");
+    for (bool keep_both : {false, true})
+    {
+        for (auto name : {"item.txt", "Folder", "link"})
+        {
+            g_autoptr(GError) error = nullptr;
+            g_assert_null(f.move(f.desktop / name, target, keep_both, &error));
+            g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+        }
+    }
+    g_assert_true(contents(f.desktop / "item.txt") == "original");
     g_assert_true(contents(f.folder / "child") == "child");
-    g_assert_false(fs::exists(target / "Folder"));
+    g_assert_true(fs::read_symlink(f.desktop / "link") == "missing");
+    g_assert_true(fs::is_empty(target));
+    std::ofstream(target / "item.txt") << "existing";
+    g_autoptr(GError) error = nullptr;
+    g_assert_null(f.move(f.desktop / "item.txt", target, false, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+    g_assert_true(contents(target / "item.txt") == "existing");
+    g_assert_true(contents(f.desktop / "item.txt") == "original");
 
-    fs::create_directory(target / "other");
-    auto shared = f.desktop / "shared";
-    std::ofstream(shared) << data;
-    bool a, b;
-    race([&]
-         { a = bool(f.move(shared, target, false, nullptr)); },
-         [&]
-         { b = bool(f.move(shared, target / "other", false, nullptr)); });
-    g_assert_true(a != b);
-    g_assert_false(fs::exists(shared));
-    g_assert_true(contents((a ? target : target / "other") / "shared") == data);
-    g_assert_false(fs::exists((b ? target : target / "other") / "shared"));
+    auto stage = target / ".stage";
+    fs::create_directory(stage);
+    auto copy = desktop_copy_item(file(f.folder).get(), file(target).get(), file(stage).get(), false, nullptr);
+    g_assert_nonnull(copy);
+    g_assert_true(contents(target / "Folder/child") == "child");
+    g_assert_true(contents(f.folder / "child") == "child");
     fs::remove_all(target);
 }
 

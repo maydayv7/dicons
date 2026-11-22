@@ -128,7 +128,7 @@ ObjectPtr<GFile> desktop_copy_item(GFile *source, GFile *desktop, GFile *stage, 
     gboolean ready = copy_tree(source, staged, g_file_info_get_attribute_string(stage_info, "id::file"), error);
     if (ready)
     {
-        if (auto published = publish_copy(staged, desktop, name, keep_both, error))
+        if (auto published = rename_into_folder(staged, desktop, name, keep_both, error))
             return published;
     }
 

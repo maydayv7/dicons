@@ -23,6 +23,9 @@ static bool same_record(GFile *metadata, const struct stat &expected)
 bool move_to_trash(GFile *file, TrashedFile &entry, GError **error)
 {
     entry.original = retain(file);
+    ObjectPtr<GFile> parent{g_file_get_parent(file)};
+    if (parent)
+        entry.parent = file_identity(parent.get(), G_FILE_QUERY_INFO_NONE);
     // GIO chooses the Trash and resolves name collisions
     // Follow the original directory entry across its rename
     const char *path = g_file_peek_path(file);
@@ -56,28 +59,37 @@ bool move_to_trash(GFile *file, TrashedFile &entry, GError **error)
     return moved;
 }
 
-ObjectPtr<GFile> restore_from_trash(const TrashedFile &entry, GError **error)
+bool trash_entry_available(const TrashedFile &entry)
 {
     struct stat current{};
-    if (!entry.stored || lstat(g_file_peek_path(entry.stored.get()), &current) != 0 ||
-        !same_file(current, entry.identity) || !same_record(entry.metadata.get(), entry.record))
+    return entry.stored && lstat(g_file_peek_path(entry.stored.get()), &current) == 0 &&
+           same_file(current, entry.identity) && same_record(entry.metadata.get(), entry.record);
+}
+
+ObjectPtr<GFile> restore_from_trash(const TrashedFile &entry, GError **error)
+{
+    if (!trash_entry_available(entry))
     {
         g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "The original Trash entry is no longer available.");
         return {};
     }
 
     ObjectPtr<GFile> parent{g_file_get_parent(entry.original.get())};
-    fs::path name = fs::path(g_file_peek_path(entry.original.get())).filename();
-    auto stem = S_ISDIR(current.st_mode) ? name : name.stem();
-    auto extension = S_ISDIR(current.st_mode) ? fs::path{} : name.extension();
-    auto destination = retain(entry.original.get());
-    for (guint n = 1; !rename_no_replace(entry.stored.get(), destination.get(), error); ++n)
+    if (!entry.parent.matches(parent.get(), G_FILE_QUERY_INFO_NONE, error))
+        return {};
+    g_autofree char *name = g_file_get_basename(entry.original.get());
+    g_autoptr(GError) attempt = nullptr;
+    auto destination = rename_into_folder(entry.stored.get(), parent.get(), name, false, &attempt);
+    if (!destination)
     {
-        if (!g_error_matches(*error, G_IO_ERROR, G_IO_ERROR_EXISTS))
+        if (!g_error_matches(attempt, G_IO_ERROR, G_IO_ERROR_EXISTS))
+        {
+            g_propagate_error(error, g_steal_pointer(&attempt));
             return {};
-        g_clear_error(error);
-        auto numbered = std::format("{} ({}){}", stem.native(), n, extension.native());
-        destination.reset(g_file_get_child(parent.get(), numbered.c_str()));
+        }
+        destination = rename_into_folder(entry.stored.get(), parent.get(), name, true, error);
+        if (!destination)
+            return {};
     }
     // Already restored even if cleanup fails
     if (same_record(entry.metadata.get(), entry.record))

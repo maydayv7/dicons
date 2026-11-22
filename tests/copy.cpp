@@ -3,7 +3,9 @@
 #include <glib/gstdio.h>
 #include <sys/stat.h>
 #include <filesystem>
+#include <fstream>
 #include <utility>
+#include <unistd.h>
 
 struct Fixture
 {
@@ -91,6 +93,31 @@ static void failed_folder()
     g_assert_true(g_file_delete(pipe, nullptr, nullptr));
 }
 
+static void full_length_names()
+{
+    const Fixture f;
+    const long limit = pathconf(g_file_peek_path(f.desktop.get()), _PC_NAME_MAX);
+    g_assert_cmpint(limit, >, 10);
+    std::string multibyte;
+    while (multibyte.size() + 3 <= size_t(limit) - 4)
+        multibyte += "雪";
+    for (const auto &name : {multibyte + ".txt", "a." + std::string(limit - 2, 'x')})
+    {
+        ObjectPtr<GFile> source{g_file_get_child(f.source.get(), name.c_str())};
+        g_assert_true((std::ofstream(g_file_peek_path(source.get())) << "test").good());
+        auto first = desktop_copy_item(source.get(), f.desktop.get(), f.stage.get(), false, nullptr);
+        g_assert_nonnull(first);
+        for (guint n : {1, 2})
+        {
+            auto numbered = desktop_copy_item(source.get(), f.desktop.get(), f.stage.get(), true, nullptr);
+            g_assert_nonnull(numbered);
+            g_autofree char *actual = g_file_get_basename(numbered.get());
+            g_assert_true(g_utf8_validate(actual, -1, nullptr));
+            g_assert_true(std::string{actual}.ends_with(" (" + std::to_string(n) + ")" + (name.ends_with(".txt") ? ".txt" : "")));
+        }
+    }
+}
+
 static void recursive_drop()
 {
     const Fixture fixture;
@@ -105,6 +132,7 @@ int main(int argc, char **argv)
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
     g_test_add_func("/copy/folder-and-collision", folder_and_collision);
     g_test_add_func("/copy/collision-filenames", collision_filenames);
+    g_test_add_func("/copy/full-length-names", full_length_names);
     g_test_add_func("/copy/failed-folder", failed_folder);
     g_test_add_func("/copy/recursive-drop", recursive_drop);
     return g_test_run();

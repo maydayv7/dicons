@@ -31,13 +31,13 @@
 | Esc               | Clear the selection                                           |
 | F2                | Edit the filename. Enter or clicking away saves. Esc cancels. |
 | Delete            | Move all selected items to Trash                              |
-| Ctrl Z            | Undo last action                                              |
+| Ctrl Z            | Undo the last action                                          |
 
 ## Supported Desktops
 
 > See [GTK4 Layer Shell](https://github.com/wmww/gtk4-layer-shell)
 
-Exclusively tested on Hyprland, but should be compatible with any `wlroots` based compositors.
+Tested on Hyprland and Sway. The compositor must support Wayland layer shell.
 
 ### Layer order
 
@@ -58,7 +58,7 @@ hl.layer_rule({ match = { namespace = "^dicons$" }, order = 0 })
 - GLib >=2.74 (`gio-unix-2.0`)
 - GTK4 Layer Shell (`gtk4-layer-shell-0`)
 - `xdg-terminal-exec` for Open in Terminal
-- Option file manager that handles `trash:///`
+- Optional file manager that handles `trash:///`
 - Optional system thumbnailers (like [Papers](https://gitlab.gnome.org/GNOME/papers) provides for PDFs)
 
 ### Installation
@@ -66,7 +66,10 @@ hl.layer_rule({ match = { namespace = "^dicons$" }, order = 0 })
 ```sh
 git clone https://github.com/maydayv7/dicons
 cd dicons
-# TODO
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+cmake --build build
+ctest --test-dir build --output-on-failure
+cmake --install build
 ```
 
 ### NixOS
@@ -79,6 +82,7 @@ home-manager.sharedModules = [ inputs.dicons.homeManagerModules.default ];
 home-manager.users.<name>.services.dicons = {
   enable = true;
   settings.show-trash = false;
+  style = ./dicons.css;
 };
 ```
 

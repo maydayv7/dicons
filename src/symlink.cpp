@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
 
 namespace
 {
@@ -33,6 +35,32 @@ namespace
         if (g_file_equal(file, target) || (other && g_file_equal(other, target)))
             watch->refresh();
     }
+
+    ObjectPtr<GFile> resolve_target(GFile *parent, const char *target, Paths &directory_links)
+    {
+        const std::filesystem::path relative{target};
+        if (std::find(relative.begin(), relative.end(), "..") == relative.end())
+            return ObjectPtr<GFile>{relative.is_absolute() ? g_file_new_for_path(target) : g_file_resolve_relative_path(parent, target)};
+
+        std::filesystem::path path = relative.is_absolute() ? "/" : g_file_peek_path(parent);
+        for (auto it = relative.begin(); it != relative.end(); ++it)
+        {
+            path /= *it;
+            if (*it == "..")
+            {
+                g_autofree char *resolved = realpath(path.c_str(), nullptr);
+                if (!resolved)
+                {
+                    directory_links.push_back(path.parent_path().native());
+                    return {};
+                }
+                path = resolved;
+            }
+            else if (std::next(it) != relative.end() && g_file_test(path.c_str(), G_FILE_TEST_IS_SYMLINK))
+                directory_links.push_back(path.native());
+        }
+        return ObjectPtr<GFile>{g_file_new_for_path(path.c_str())};
+    }
 }
 
 // Read each hop off the UI thread
@@ -41,7 +69,7 @@ void read_symlink_target(GFileInfo *info, GFile *file)
     const char *target = g_file_info_get_attribute_byte_string(info, G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET);
     if (!target)
         return;
-    Paths paths;
+    Paths paths, directory_links;
     auto current = retain(file);
     ObjectPtr<GFileInfo> hop;
     while (target && paths.size() < 40)
@@ -49,7 +77,9 @@ void read_symlink_target(GFileInfo *info, GFile *file)
         ObjectPtr<GFile> parent{g_file_get_parent(current.get())};
         if (!parent)
             break;
-        current.reset(g_path_is_absolute(target) ? g_file_new_for_path(target) : g_file_resolve_relative_path(parent.get(), target));
+        current = resolve_target(parent.get(), target, directory_links);
+        if (!current)
+            break;
         auto *path = g_file_peek_path(current.get());
         if (!path || std::ranges::find(paths, path) != paths.end())
             break;
@@ -69,6 +99,8 @@ void read_symlink_target(GFileInfo *info, GFile *file)
         }
     }
     std::vector<char *> values;
+    for (auto &path : directory_links)
+        values.push_back(path.data());
     for (auto &path : paths)
         values.push_back(path.data());
     values.push_back(nullptr);

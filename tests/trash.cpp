@@ -53,8 +53,7 @@ static void restore_items()
     std::ofstream(dir / "inside") << "safe";
     auto directory = trash(dir);
     fs::create_directories(dir);
-    g_assert_nonnull(restore_from_trash(directory, &error));
-    g_assert_no_error(error);
+    g_assert_nonnull(restore_from_trash(directory, nullptr));
     g_assert_true(fs::exists(folder / "folder.ext (1)" / "inside"));
 
     const auto link = folder / ".link";

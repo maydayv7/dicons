@@ -1,6 +1,7 @@
 #include "desktop_directory.hpp"
 #include "preferences.hpp"
 #include "grid_layout.hpp"
+#include "symlink.hpp"
 
 #define G_SETTINGS_ENABLE_BACKEND
 #include <gio/gsettingsbackend.h>
@@ -145,8 +146,8 @@ static void manual_layout()
     const auto uri = [&](const char *name)
     {
         ObjectPtr<GFile> file{g_file_get_child(folder.get(), name)};
-        g_autofree char *text = g_file_get_uri(file.get());
-        return std::string{text};
+        std::unique_ptr<char, GlibDeleter<g_free>> text{g_file_get_uri(file.get())};
+        return std::string{text.get()};
     };
     auto at = [&](guint i)
     {
@@ -455,6 +456,30 @@ static void symlink_targets()
                            {
         ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(directory.items.get(), 0))};
         return info && g_file_info_get_icon(info.get()) && g_icon_equal(g_file_info_get_icon(info.get()), expected.get()); }));
+
+    for (const auto *branch : {"first", "second"})
+    {
+        fs::create_directories(base / branch / "inner");
+        std::ofstream(base / branch / "app.desktop") << "[Desktop Entry]\nType=Application\nName=Mail\nIcon=mail-unread\nExec=true\n";
+    }
+    fs::create_directory_symlink("first/inner", base / "via");
+    fs::remove(base / "hop");
+    fs::create_symlink("via/../app.desktop", base / "hop");
+    ObjectPtr<GIcon> mail{g_themed_icon_new("mail-unread")};
+    for (const auto *branch : {"first", "second"})
+    {
+        if (std::string_view(branch) == "second")
+        {
+            fs::create_directory_symlink("second/inner", base / "new-via");
+            fs::rename(base / "new-via", base / "via");
+        }
+        auto actual = base / branch / "app.desktop";
+        g_assert_true(wait_for([&]
+                               {
+            ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(directory.items.get(), 0))};
+            return info && g_strcmp0(symlink_target_path(info.get()), actual.c_str()) == 0 &&
+                   g_icon_equal(g_file_info_get_icon(info.get()), mail.get()); }));
+    }
 }
 
 static void directory_burst()

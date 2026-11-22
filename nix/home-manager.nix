@@ -30,6 +30,12 @@ in {
       example = {show-trash = false;};
       description = "Preferences for dicons";
     };
+    style = lib.mkOption {
+      type = lib.types.nullOr (lib.types.either lib.types.path lib.types.lines);
+      default = null;
+      example = lib.literalExpression "./dicons.css";
+      description = "GTK CSS overrides";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -39,6 +45,11 @@ in {
     xdg.configFile = {
       "systemd/user/dicons.service".source = unit;
       "systemd/user/${target}.wants/dicons.service".source = unit;
+      "dicons/style.css" = lib.mkIf (cfg.style != null) (
+        if builtins.isPath cfg.style || lib.isStorePath cfg.style
+        then {source = cfg.style;}
+        else {text = cfg.style;}
+      );
     };
   };
 }

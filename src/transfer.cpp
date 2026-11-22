@@ -71,10 +71,7 @@ static void transfer_worker(GTask *task, gpointer, gpointer data, GCancellable *
         if (transfer->move && g_file_equal(destination.get(), source))
             transfer->complete = false;
         else if (transfer->move)
-        {
-            g_autofree char *uri = g_file_get_uri(source);
-            remember_file(transfer->undo, destination.get(), source, transfer->source_identities->at(uri));
-        }
+            remember_file(transfer->undo, destination.get(), source);
         else
             remember_file(transfer->undo, destination.get());
         g_task_return_pointer(task, destination.release(), g_object_unref);

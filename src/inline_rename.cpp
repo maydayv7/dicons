@@ -60,12 +60,11 @@ static void close_editor(RenameEditor &editor, bool restore_focus)
 static void rename_worker(GTask *task, gpointer source, gpointer data, GCancellable *)
 {
     g_autoptr(GError) error = nullptr;
-    auto original = file_identity(G_FILE(source));
     auto renamed = rename_desktop_item(G_FILE(source), static_cast<const char *>(data), &error);
     if (renamed)
     {
         auto *request = static_cast<RenameRequest *>(g_async_result_get_user_data(G_ASYNC_RESULT(task)));
-        remember_file(request->undo, renamed.get(), G_FILE(source), original);
+        remember_file(request->undo, renamed.get(), G_FILE(source));
         g_task_return_pointer(task, renamed.release(), g_object_unref);
     }
     else
