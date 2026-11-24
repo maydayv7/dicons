@@ -209,11 +209,7 @@ static void drag_began(GtkDragSource *, GdkDrag *gdk_drag, GtkListItem *item)
             if (i != position)
                 drag->uris.emplace_back(uri);
             if (!is_trash_icon(other.get()))
-            {
-                if (g_file_info_get_is_symlink(other.get()))
-                    other.reset(g_file_query_info(file, drop_identity_attributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr));
-                drag->identities->try_emplace(uri, other.get());
-            }
+                drag->identities->emplace(uri, listed_identity(other.get(), file));
         }
     }
 }

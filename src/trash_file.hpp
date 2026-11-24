@@ -10,6 +10,6 @@ struct TrashedFile
     struct stat identity{}, record{};
 };
 
-bool move_to_trash(GFile *file, TrashedFile &entry, GError **error);
+bool move_to_trash(GFile *file, TrashedFile &entry, GError **error, const DropIdentity *expected = nullptr);
 bool trash_entry_available(const TrashedFile &entry);
 ObjectPtr<GFile> restore_from_trash(const TrashedFile &entry, GError **error);

@@ -14,9 +14,8 @@ namespace
     {
         UndoToken undo;
         ObjectPtr<GtkGridView> grid;
-        std::vector<ObjectPtr<GFile>> files;
+        std::vector<std::pair<ObjectPtr<GFile>, DropIdentity>> files;
         std::function<void(bool)> finished;
-        std::shared_ptr<const DragIdentities> identities;
         std::vector<TrashedFile> entries;
         struct Error
         {
@@ -53,12 +52,11 @@ namespace
     void work(GTask *task, gpointer, gpointer data, GCancellable *)
     {
         auto &request = *static_cast<Request *>(data);
-        for (const auto &file : request.files)
+        for (const auto &[file, identity] : request.files)
         {
             TrashedFile entry;
             g_autoptr(GError) error = nullptr;
-            if ((request.identities && !verify_drag_source(*request.identities, file.get(), &error)) ||
-                !move_to_trash(file.get(), entry, &error))
+            if (!move_to_trash(file.get(), entry, &error, &identity))
                 record_error(request, "Could not move item to Trash", file.get(), error->message);
             else
             {
@@ -78,7 +76,7 @@ namespace
         auto *app = G_APPLICATION(source);
         auto &state = history(app);
         auto &request = state.queue.front();
-        for (const auto &file : request.files)
+        for (const auto &[file, identity] : request.files)
             g_hash_table_remove(state.pending.get(), file.get());
         for (auto &entry : request.entries)
             remember_trash(request.undo, std::move(entry));
@@ -110,14 +108,26 @@ namespace
 }
 
 void trash_files(GtkGridView *origin, const std::vector<GFile *> &files, std::function<void(bool)> finished,
-                 std::shared_ptr<const DragIdentities> identities)
+                 const DragIdentities *identities)
 {
     auto *app = application(origin);
     auto &state = history(app);
-    Request request{.grid = retain(origin), .finished = std::move(finished), .identities = std::move(identities)};
+    Request request{.grid = retain(origin), .finished = std::move(finished)};
     for (auto *file : files)
-        if (g_hash_table_add(state.pending.get(), g_object_ref(file)))
-            request.files.push_back(retain(file));
+    {
+        if (!g_hash_table_add(state.pending.get(), g_object_ref(file)))
+            continue;
+        DropIdentity identity;
+        if (identities)
+        {
+            g_autofree char *uri = g_file_get_uri(file);
+            if (auto it = identities->find(uri); it != identities->end())
+                identity = it->second;
+        }
+        else
+            identity = file_identity(file);
+        request.files.emplace_back(retain(file), std::move(identity));
+    }
     if (request.files.empty())
     {
         if (request.finished)

@@ -9,7 +9,13 @@ struct UndoStep;
 using UndoToken = std::shared_ptr<UndoStep>;
 void attach_undo_preferences(GApplication *app, GSettings *settings, GFile *desktop);
 UndoToken begin_undo_step(GApplication *app);
-void remember_file(const UndoToken &step, GFile *result, GFile *original = nullptr, DropIdentity previous = DropIdentity{});
+enum class FileOrigin
+{
+    created,
+    copied
+};
+void remember_new_file(const UndoToken &step, GFile *result, FileOrigin origin);
+void remember_move(const UndoToken &step, GFile *result, GFile *original, DropIdentity item, DropIdentity previous = {});
 void remember_trash(const UndoToken &step, TrashedFile entry);
 void finish_undo_step(GApplication *app, const UndoToken &step);
 void undo_latest(GApplication *app, GtkGridView *grid = nullptr);

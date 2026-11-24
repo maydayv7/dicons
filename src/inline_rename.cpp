@@ -15,6 +15,7 @@ namespace
     {
         GtkListItem *editing{};
         ObjectPtr<GFileInfo> requested;
+        DropIdentity identity;
     };
 
     struct RenameRequest
@@ -22,6 +23,7 @@ namespace
         ObjectPtr<GtkGridView> grid;
         ObjectPtr<GApplication> app;
         bool keep_selected;
+        DropIdentity identity;
         UndoToken undo;
     };
 }
@@ -60,11 +62,11 @@ static void close_editor(RenameEditor &editor, bool restore_focus)
 static void rename_worker(GTask *task, gpointer source, gpointer data, GCancellable *)
 {
     g_autoptr(GError) error = nullptr;
-    auto renamed = rename_desktop_item(G_FILE(source), static_cast<const char *>(data), &error);
+    auto *request = static_cast<RenameRequest *>(g_async_result_get_user_data(G_ASYNC_RESULT(task)));
+    auto renamed = rename_desktop_item(G_FILE(source), static_cast<const char *>(data), &error, &request->identity);
     if (renamed)
     {
-        auto *request = static_cast<RenameRequest *>(g_async_result_get_user_data(G_ASYNC_RESULT(task)));
-        remember_file(request->undo, renamed.get(), G_FILE(source));
+        remember_move(request->undo, renamed.get(), G_FILE(source), request->identity);
         g_task_return_pointer(task, renamed.release(), g_object_unref);
     }
     else
@@ -94,7 +96,7 @@ static void commit_name(RenameEditor &editor, bool restore_focus)
     if (window && info && g_strcmp0(name, editable_name(info)) != 0)
     {
         auto *grid = GTK_GRID_VIEW(gtk_widget_get_ancestor(entry, GTK_TYPE_GRID_VIEW));
-        auto *request = new RenameRequest{retain(grid), retain(G_APPLICATION(gtk_window_get_application(window))), restore_focus};
+        auto *request = new RenameRequest{retain(grid), retain(G_APPLICATION(gtk_window_get_application(window))), restore_focus, editor.identity};
         request->undo = begin_undo_step(request->app.get());
         ObjectPtr<GTask> task{g_task_new(item_file(info), nullptr, rename_finished, request)};
         g_task_set_task_data(task.get(), g_strdup(name), g_free);
@@ -105,8 +107,6 @@ static void commit_name(RenameEditor &editor, bool restore_focus)
 
 static void show_editor(RenameEditor &editor, GtkListItem *item)
 {
-    if (editor.editing && editor.editing != item)
-        commit_name(editor, false);
     auto *info = G_FILE_INFO(gtk_list_item_get_item(item));
     auto *label = tile_label(item);
     auto *entry = gtk_widget_get_next_sibling(label);
@@ -206,12 +206,14 @@ void start_inline_rename(GtkGridView *grid, guint position)
 {
     auto &editor = editor_for(grid);
     auto *model = G_LIST_MODEL(gtk_grid_view_get_model(grid));
-    editor.requested.reset(G_FILE_INFO(g_list_model_get_item(model, position)));
-    if (!editor.requested || is_trash_icon(editor.requested.get()))
-    {
-        editor.requested.reset();
+    ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(model, position))};
+    editor.requested.reset();
+    if (!info || is_trash_icon(info.get()) || (editor.editing && gtk_list_item_get_item(editor.editing) == info.get()))
         return;
-    }
+    if (editor.editing)
+        commit_name(editor, false);
+    editor.identity = listed_identity(info.get(), item_file(info.get()));
+    editor.requested = std::move(info);
     gtk_grid_view_scroll_to(grid, position, GTK_LIST_SCROLL_FOCUS, nullptr);
     if (auto *item = bound_item(grid, editor.requested.get()))
         show_editor(editor, item);

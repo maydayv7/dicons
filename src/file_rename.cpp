@@ -36,6 +36,28 @@ DropIdentity file_identity(GFile *file, GFileQueryInfoFlags flags)
     return DropIdentity(info.get());
 }
 
+static constexpr char link_identity[] = "dicons::link-identity";
+
+void cache_link_identity(GFileInfo *info, GFile *file)
+{
+    if (g_file_info_get_is_symlink(info))
+    {
+        ObjectPtr<GFileInfo> link{g_file_query_info(file, drop_identity_attributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr)};
+        if (link && g_file_info_get_is_symlink(link.get()))
+            g_file_info_set_attribute_object(info, link_identity, G_OBJECT(link.get()));
+    }
+}
+
+DropIdentity listed_identity(GFileInfo *info, GFile *file)
+{
+    if (!g_file_info_get_is_symlink(info))
+        return DropIdentity(info);
+    // Initial directory listings are visible before their background link refresh
+    if (!g_file_info_has_attribute(info, link_identity))
+        cache_link_identity(info, file);
+    return DropIdentity(G_FILE_INFO(g_file_info_get_attribute_object(info, link_identity)));
+}
+
 const DropIdentity *verify_drag_source(const DragIdentities &identities, GFile *source, GError **error)
 {
     g_autofree char *uri = g_file_get_uri(source);
@@ -232,7 +254,7 @@ ObjectPtr<GFile> move_into_folder(GFile *source, GFile *folder, bool keep_both, 
     return rename_into_folder(source, folder, name, keep_both, error, &identity);
 }
 
-ObjectPtr<GFile> rename_desktop_item(GFile *source, const char *name, GError **error)
+ObjectPtr<GFile> rename_desktop_item(GFile *source, const char *name, GError **error, const DropIdentity *expected)
 {
     const std::string_view filename{name};
     if (filename.empty() || filename == "." || filename == ".." || filename.find('/') != filename.npos)
@@ -243,7 +265,8 @@ ObjectPtr<GFile> rename_desktop_item(GFile *source, const char *name, GError **e
 
     ObjectPtr<GFile> parent{g_file_get_parent(source)};
     ObjectPtr<GFile> destination{g_file_get_child_for_display_name(parent.get(), name, error)};
-    if (!destination || !rename_no_replace(source, destination.get(), error))
+    if (!destination || (expected && !expected->matches(source, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, error)) ||
+        !rename_no_replace(source, destination.get(), error))
         return nullptr;
     return destination;
 }

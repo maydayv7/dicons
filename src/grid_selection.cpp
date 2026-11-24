@@ -16,11 +16,17 @@ static void for_each_selected_file(GtkSelectionModel *selection, const auto &vis
     }
 }
 
-std::vector<GFile *> selected_files(GtkSelectionModel *selection)
+std::vector<GFile *> selected_files(GtkSelectionModel *selection, DragIdentities *identities)
 {
     std::vector<GFile *> files;
-    for_each_selected_file(selection, [&](GFile *file, GFileInfo *)
-                           { files.push_back(file); });
+    for_each_selected_file(selection, [&](GFile *file, GFileInfo *info)
+                           {
+                               files.push_back(file);
+                               if (identities)
+                               {
+                                   g_autofree char *uri = g_file_get_uri(file);
+                                   identities->emplace(uri, listed_identity(info, file));
+                               } });
     return files;
 }
 

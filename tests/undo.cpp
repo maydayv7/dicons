@@ -47,13 +47,13 @@ static void mixed_history()
     fs::create_directory(f.root / "Folder");
     std::ofstream(f.root / "old") << "keep";
     auto created = begin_undo_step(f.app.get());
-    remember_file(created, old.get());
+    remember_new_file(created, old.get(), FileOrigin::created);
     finish_undo_step(f.app.get(), created);
     for (auto [from, to] : {std::pair{old.get(), named.get()}, std::pair{named.get(), moved.get()}})
     {
         auto step = begin_undo_step(f.app.get());
         g_assert_true(rename_no_replace(from, to, nullptr));
-        remember_file(step, to, from);
+        remember_move(step, to, from, file_identity(to));
         finish_undo_step(f.app.get(), step);
     }
     auto deleted = begin_undo_step(f.app.get());
@@ -84,7 +84,7 @@ static void partial_batch()
     {
         auto file = f.file(name);
         std::ofstream(f.root / name) << name;
-        remember_file(group, file.get());
+        remember_new_file(group, file.get(), FileOrigin::copied);
     }
     finish_undo_step(f.app.get(), group);
     fs::rename(f.root / "two", f.root / "original two");
@@ -105,7 +105,7 @@ static void collision_retry()
     auto source = f.file("source"), destination = f.file("destination");
     auto step = begin_undo_step(f.app.get());
     g_assert_true(rename_no_replace(source.get(), destination.get(), nullptr));
-    remember_file(step, destination.get(), source.get());
+    remember_move(step, destination.get(), source.get(), file_identity(destination.get()));
     finish_undo_step(f.app.get(), step);
     std::ofstream(f.root / "source") << "collision";
     undo_latest(f.app.get());
@@ -126,13 +126,57 @@ static void collision_retry()
     g_assert_true(actual == "original");
 }
 
+static void folder_contents()
+{
+    Fixture f;
+    fs::create_directories(f.root / "target/sub");
+    fs::create_directory_symlink("target", f.root / "link");
+    fs::create_symlink("absent", f.root / "dangling");
+    auto step = begin_undo_step(f.app.get());
+    for (auto name : {"created", "copied", "empty", "empty copy"})
+    {
+        fs::create_directory(f.root / name);
+        const bool copied = g_str_equal(name, "copied") || g_str_equal(name, "empty copy");
+        remember_new_file(step, f.file(name).get(), copied ? FileOrigin::copied : FileOrigin::created);
+    }
+    for (auto name : {"link", "dangling"})
+        remember_new_file(step, f.file(name).get(), FileOrigin::copied);
+    finish_undo_step(f.app.get(), step);
+    fs::create_symlink("missing", f.root / "created/.child");
+    std::ofstream(f.root / "copied/.child") << "added";
+    auto settings = desktop_preferences();
+    auto undo_and_wait = [&]
+    {
+        undo_latest(f.app.get());
+        change_view(f.app.get(), settings.get(), nullptr, [&]
+                    { g_settings_set_int(settings.get(), "icon-size", 80); });
+        undo_latest(f.app.get());
+        wait_for([&]
+                 { return g_settings_get_int(settings.get(), "icon-size") == 48; });
+    };
+    undo_and_wait();
+    g_assert_true(fs::is_symlink(f.root / "created/.child"));
+    g_assert_true(fs::is_regular_file(f.root / "copied/.child"));
+    g_assert_false(fs::exists(f.root / "empty"));
+    g_assert_false(fs::exists(f.root / "empty copy"));
+    g_assert_false(fs::is_symlink(f.root / "link"));
+    g_assert_false(fs::is_symlink(f.root / "dangling"));
+    g_assert_true(fs::is_directory(f.root / "target/sub"));
+
+    fs::remove(f.root / "created/.child");
+    fs::remove(f.root / "copied/.child");
+    undo_and_wait();
+    g_assert_false(fs::exists(f.root / "created"));
+    g_assert_false(fs::exists(f.root / "copied"));
+}
+
 static void numbered_restore()
 {
     Fixture f;
     auto file = f.file("note.txt");
     std::ofstream(f.root / "note.txt") << "created";
     auto create = begin_undo_step(f.app.get());
-    remember_file(create, file.get());
+    remember_new_file(create, file.get(), FileOrigin::created);
     TrashedFile trash;
     auto deletion = begin_undo_step(f.app.get());
     g_assert_true(move_to_trash(file.get(), trash, nullptr));
@@ -171,7 +215,7 @@ static void original_folder_unavailable()
         else
         {
             g_assert_true(rename_no_replace(original.get(), moved.get(), nullptr));
-            remember_file(step, moved.get(), original.get());
+            remember_move(step, moved.get(), original.get(), file_identity(moved.get()));
         }
         finish_undo_step(f.app.get(), step);
         fs::rename(f.root / "Folder", f.root / "away");
@@ -202,7 +246,7 @@ static void numbered_folder_restore()
     fs::create_directory(f.root / "Folder");
     std::ofstream(f.root / "Folder/child") << "copy";
     auto copy = begin_undo_step(f.app.get());
-    remember_file(copy, f.file("Folder/child").get());
+    remember_new_file(copy, f.file("Folder/child").get(), FileOrigin::copied);
     finish_undo_step(f.app.get(), copy);
     auto deletion = begin_undo_step(f.app.get());
     TrashedFile trash;
@@ -227,7 +271,7 @@ static void history_limit()
     auto pending = begin_undo_step(f.app.get());
     auto file = f.file("older-file");
     std::ofstream(f.root / "older-file") << "keep";
-    remember_file(pending, file.get());
+    remember_new_file(pending, file.get(), FileOrigin::created);
     g_settings_set_int(settings.get(), "icon-size", 48);
     for (int size = 49; size <= 84; ++size)
         change_view(f.app.get(), settings.get(), nullptr, [&]
@@ -253,7 +297,7 @@ static void retry_at_history_limit()
     std::ofstream(f.root / "original") << "item";
     auto step = begin_undo_step(f.app.get());
     g_assert_true(rename_no_replace(original.get(), moved.get(), nullptr));
-    remember_file(step, moved.get(), original.get());
+    remember_move(step, moved.get(), original.get(), file_identity(moved.get()));
     finish_undo_step(f.app.get(), step);
     std::weak_ptr<UndoStep> retry = step;
     step.reset();
@@ -290,12 +334,12 @@ static void cross_device_history()
     ObjectPtr<GFile> dest{g_file_new_build_filename(pattern, "item", nullptr)};
     std::ofstream(f.root / "item") << "cross device";
     auto create = begin_undo_step(f.app.get());
-    remember_file(create, source.get());
+    remember_new_file(create, source.get(), FileOrigin::created);
     finish_undo_step(f.app.get(), create);
     auto move = begin_undo_step(f.app.get());
     auto id = file_identity(source.get());
     g_assert_true(rename_no_replace(source.get(), dest.get(), nullptr, &id));
-    remember_file(move, dest.get(), source.get(), id);
+    remember_move(move, dest.get(), source.get(), file_identity(dest.get()), id);
     finish_undo_step(f.app.get(), move);
     undo_latest(f.app.get());
     undo_latest(f.app.get());
@@ -348,7 +392,7 @@ static void restored_position()
     write_positions(settings.get(), {{uri, {4, 2}}, {"file:///other", {0, 0}}});
     auto step = begin_undo_step(f.app.get());
     g_assert_true(rename_no_replace(original.get(), moved.get(), nullptr));
-    remember_file(step, moved.get(), original.get());
+    remember_move(step, moved.get(), original.get(), file_identity(moved.get()));
     write_positions(settings.get(), {{"file:///other", {3, 1}}});
     finish_undo_step(f.app.get(), step);
     undo_latest(f.app.get());
@@ -368,6 +412,7 @@ int main(int argc, char **argv)
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
     g_test_add_func("/undo/mixed-history", mixed_history);
     g_test_add_func("/undo/partial-batch", partial_batch);
+    g_test_add_func("/undo/folder-contents", folder_contents);
     g_test_add_func("/undo/collision-retry", collision_retry);
     g_test_add_func("/undo/original-folder-unavailable", original_folder_unavailable);
     g_test_add_func("/undo/numbered-restore", numbered_restore);

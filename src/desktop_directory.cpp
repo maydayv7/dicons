@@ -1,5 +1,6 @@
 #include "desktop_directory.hpp"
 #include "desktop_item.hpp"
+#include "file_rename.hpp"
 #include "notifications.hpp"
 #include "symlink.hpp"
 #include "grid_layout.hpp"
@@ -208,6 +209,7 @@ private:
             g_task_return_error(task, g_steal_pointer(&error));
             return;
         }
+        cache_link_identity(info, file);
         read_symlink_target(info, file);
         read_launcher_presentation(info, file);
         cache_filename_key(info);

@@ -108,6 +108,8 @@ if(BUILD_TESTING)
     dicons_test(trash trash.cpp)
     dicons_test(undo undo.cpp)
     set_tests_properties(desktop-undo PROPERTIES ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
+    dicons_test(file-actions file_actions.cpp)
+    set_tests_properties(desktop-file-actions PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
 endif()
 
 install(TARGETS dicons RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")

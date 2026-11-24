@@ -6,7 +6,9 @@
 
 void trash_selection(GtkGridView *grid)
 {
-    trash_files(grid, selected_files(gtk_grid_view_get_model(grid)));
+    DragIdentities identities;
+    auto files = selected_files(gtk_grid_view_get_model(grid), &identities);
+    trash_files(grid, files, {}, &identities);
 }
 
 void rename_selection(GtkGridView *grid)

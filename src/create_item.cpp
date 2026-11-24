@@ -59,10 +59,11 @@ static ObjectPtr<GFile> create_unique(const Creation &request, GError **error)
 static void create_worker(GTask *task, gpointer, gpointer data, GCancellable *)
 {
     g_autoptr(GError) error = nullptr;
-    auto item = create_unique(*static_cast<Creation *>(data), &error);
+    auto &request = *static_cast<Creation *>(data);
+    auto item = create_unique(request, &error);
     if (item)
     {
-        remember_file(static_cast<Creation *>(data)->undo, item.get());
+        remember_new_file(request.undo, item.get(), request.source ? FileOrigin::copied : FileOrigin::created);
         g_task_return_pointer(task, item.release(), g_object_unref);
     }
     else

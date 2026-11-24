@@ -4,19 +4,29 @@
 #include "notifications.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <deque>
 #include <set>
 #include <variant>
+#include <utility>
+#include <unistd.h>
 
 namespace
 {
     using Variant = std::shared_ptr<GVariant>;
     Variant value(GVariant *owned) { return Variant(owned, g_variant_unref); }
 
+    enum class Removal
+    {
+        trash,
+        empty_folder,
+        copied_folder
+    };
     struct FileChange
     {
         ObjectPtr<GFile> current, original;
         DropIdentity item, parent, previous;
+        Removal removal = Removal::trash;
     };
     struct Restored
     {
@@ -60,6 +70,8 @@ struct UndoStep
     std::vector<std::shared_ptr<const Restored>> rebind;
     std::vector<std::string> errors;
     bool ready{};
+    size_t remaining{};
+    bool confirmed{};
 };
 
 static void run_next(GApplication *app);
@@ -96,19 +108,23 @@ UndoToken begin_undo_step(GApplication *app)
     return step;
 }
 
-void remember_file(const UndoToken &step, GFile *result, GFile *original, DropIdentity previous)
+void remember_new_file(const UndoToken &step, GFile *result, FileOrigin origin)
 {
-    if (original && g_file_equal(result, original))
-        return;
-    FileChange change{retain(result), {}, file_identity(result), DropIdentity{}};
-    if (original)
-    {
-        change.original = retain(original);
-        change.previous = previous.id.empty() ? change.item : std::move(previous);
-        ObjectPtr<GFile> parent{g_file_get_parent(original)};
-        change.parent = file_identity(parent.get(), G_FILE_QUERY_INFO_NONE);
-    }
+    ObjectPtr<GFileInfo> info{g_file_query_info(result, drop_identity_attributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr)};
+    FileChange change{.current = retain(result), .item = DropIdentity(info.get())};
+    if (info && g_file_info_get_file_type(info.get()) == G_FILE_TYPE_DIRECTORY)
+        change.removal = origin == FileOrigin::copied ? Removal::copied_folder : Removal::empty_folder;
     step->files.emplace_back(std::move(change));
+}
+
+void remember_move(const UndoToken &step, GFile *result, GFile *original, DropIdentity item, DropIdentity previous)
+{
+    if (g_file_equal(result, original))
+        return;
+    if (previous.id.empty())
+        previous = item;
+    ObjectPtr<GFile> parent{g_file_get_parent(original)};
+    step->files.emplace_back(FileChange{retain(result), retain(original), std::move(item), file_identity(parent.get(), G_FILE_QUERY_INFO_NONE), std::move(previous)});
 }
 
 void remember_trash(const UndoToken &step, TrashedFile entry)
@@ -157,8 +173,10 @@ void finish_undo_step(GApplication *app, const UndoToken &step)
 static void undo_files(GTask *task, gpointer, gpointer data, GCancellable *)
 {
     auto &step = *static_cast<UndoStep *>(data);
-    for (size_t i = step.files.size(); i-- > 0;)
+    while (step.remaining)
     {
+        const size_t i = step.remaining - 1;
+        const bool confirmed = std::exchange(step.confirmed, false);
         GError *raw = nullptr;
         ObjectPtr<GFile> restored;
         bool done = false;
@@ -175,6 +193,25 @@ static void undo_files(GTask *task, gpointer, gpointer data, GCancellable *)
             file = change.current.get();
             if (!change.item.matches(file, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, &raw))
                 done = g_error_matches(raw, G_IO_ERROR, G_IO_ERROR_FAILED) || g_error_matches(raw, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+            else if (!change.original && change.removal != Removal::trash && !confirmed)
+            {
+                done = rmdir(g_file_peek_path(file)) == 0;
+                if (!done)
+                {
+                    const int code = errno;
+                    if (code == ENOTEMPTY || code == EEXIST)
+                    {
+                        if (change.removal == Removal::copied_folder)
+                        {
+                            g_task_return_boolean(task, false);
+                            return;
+                        }
+                        g_set_error_literal(&raw, G_IO_ERROR, G_IO_ERROR_NOT_EMPTY, "The new folder contains items. Empty it before undoing its creation.");
+                    }
+                    else
+                        g_set_error_literal(&raw, G_IO_ERROR, g_io_error_from_errno(code), g_strerror(code));
+                }
+            }
             else if (!change.original)
                 done = g_file_trash(file, nullptr, &raw);
             else
@@ -204,15 +241,53 @@ static void undo_files(GTask *task, gpointer, gpointer data, GCancellable *)
         }
         if (done)
             step.files.erase(step.files.begin() + i);
+        --step.remaining;
     }
     g_task_return_boolean(task, true);
 }
 
-static void undo_finished(GObject *source, GAsyncResult *, gpointer)
+static void continue_undo(GApplication *app);
+
+static void confirm_folder_undo(GApplication *app, UndoStep &step)
+{
+    auto *parent = step.grid ? GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(step.grid.get()))) : nullptr;
+    if (!parent || !gtk_widget_get_mapped(GTK_WIDGET(parent)))
+    {
+        --step.remaining;
+        continue_undo(app);
+        return;
+    }
+    const auto &folder = std::get<FileChange>(step.files[step.remaining - 1]).current;
+    g_autofree char *path = g_file_get_parse_name(folder.get());
+    ObjectPtr<GtkAlertDialog> dialog{gtk_alert_dialog_new("Move this copied folder and its contents to Trash?")};
+    g_autofree char *detail = g_strdup_printf("%s\n\nThis includes items added since the folder was copied.", path);
+    gtk_alert_dialog_set_detail(dialog.get(), detail);
+    const char *buttons[] = {"Keep Folder", "Move to Trash", nullptr};
+    gtk_alert_dialog_set_buttons(dialog.get(), buttons);
+    gtk_alert_dialog_set_cancel_button(dialog.get(), 0);
+    gtk_alert_dialog_set_default_button(dialog.get(), 0);
+    ObjectPtr<GCancellable> cancel{g_cancellable_new()};
+    g_signal_connect_object(parent, "unmap", G_CALLBACK(g_cancellable_cancel), cancel.get(), G_CONNECT_SWAPPED);
+    gtk_alert_dialog_choose(dialog.get(), parent, cancel.get(), [](GObject *source, GAsyncResult *result, gpointer data)
+                            {
+                                ObjectPtr<GApplication> app{G_APPLICATION(data)};
+                                auto &step = *history(app.get()).requested.front();
+                                step.confirmed = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), result, nullptr) == 1;
+                                if (!step.confirmed)
+                                    --step.remaining;
+                                continue_undo(app.get()); }, g_object_ref(app));
+}
+
+static void undo_finished(GObject *source, GAsyncResult *result, gpointer)
 {
     auto *app = G_APPLICATION(source);
     auto &state = history(app);
     auto step = state.requested.front();
+    if (!g_task_propagate_boolean(G_TASK(result), nullptr))
+    {
+        confirm_folder_undo(app, *step);
+        return;
+    }
     state.requested.pop_front();
     for (const auto &error : step->errors)
         notify_error(app, "Could not fully undo operation", error.c_str());
@@ -298,6 +373,13 @@ static void rebind_file(Change &file, const Restored &mapping)
     }
 }
 
+static void continue_undo(GApplication *app)
+{
+    ObjectPtr<GTask> task{g_task_new(app, nullptr, undo_finished, nullptr)};
+    g_task_set_task_data(task.get(), history(app).requested.front().get(), nullptr);
+    g_task_run_in_thread(task.get(), undo_files);
+}
+
 static void run_next(GApplication *app)
 {
     auto &state = history(app);
@@ -307,9 +389,8 @@ static void run_next(GApplication *app)
         if (!step->files.empty())
         {
             state.running = true;
-            ObjectPtr<GTask> task{g_task_new(app, nullptr, undo_finished, nullptr)};
-            g_task_set_task_data(task.get(), step.get(), nullptr);
-            g_task_run_in_thread(task.get(), undo_files);
+            step->remaining = step->files.size();
+            continue_undo(app);
             return;
         }
         if (step->view)

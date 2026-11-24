@@ -6,4 +6,4 @@
 #include <vector>
 
 void trash_files(GtkGridView *origin, const std::vector<GFile *> &files,
-                 std::function<void(bool)> finished = {}, std::shared_ptr<const DragIdentities> identities = {});
+                 std::function<void(bool)> finished = {}, const DragIdentities *identities = nullptr);

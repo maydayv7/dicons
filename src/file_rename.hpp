@@ -5,11 +5,12 @@
 #include <string>
 #include <unordered_map>
 
-inline constexpr char drop_identity_attributes[] = "id::file,time::created,time::created-nsec";
+inline constexpr char drop_identity_attributes[] = "standard::is-symlink,standard::type,id::file,time::created,time::created-nsec";
 
 struct DropIdentity
 {
-    explicit DropIdentity(GFileInfo *info = nullptr);
+    DropIdentity() = default;
+    explicit DropIdentity(GFileInfo *info);
     bool matches(GFile *file, GFileQueryInfoFlags flags, GError **error) const;
     bool operator==(const DropIdentity &) const = default;
 
@@ -19,6 +20,8 @@ struct DropIdentity
 };
 
 DropIdentity file_identity(GFile *file, GFileQueryInfoFlags flags = G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS);
+DropIdentity listed_identity(GFileInfo *info, GFile *file);
+void cache_link_identity(GFileInfo *info, GFile *file);
 
 using DragIdentities = std::unordered_map<std::string, DropIdentity>;
 const DropIdentity *verify_drag_source(const DragIdentities &identities, GFile *source, GError **error);
@@ -27,4 +30,4 @@ const DropIdentity *verify_drag_source(const DragIdentities &identities, GFile *
 bool rename_no_replace(GFile *source, GFile *destination, GError **error, const DropIdentity *move_identity = nullptr);
 [[nodiscard]] ObjectPtr<GFile> move_into_folder(GFile *source, GFile *folder, bool keep_both, GError **error, const DropIdentity *expected = nullptr);
 [[nodiscard]] ObjectPtr<GFile> rename_into_folder(GFile *source, GFile *folder, const char *name, bool keep_both, GError **error, const DropIdentity *move_identity = nullptr);
-[[nodiscard]] ObjectPtr<GFile> rename_desktop_item(GFile *source, const char *name, GError **error);
+[[nodiscard]] ObjectPtr<GFile> rename_desktop_item(GFile *source, const char *name, GError **error, const DropIdentity *expected = nullptr);

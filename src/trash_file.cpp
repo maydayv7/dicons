@@ -20,7 +20,7 @@ static bool same_record(GFile *metadata, const struct stat &expected)
            current.st_ctim.tv_sec == expected.st_ctim.tv_sec && current.st_ctim.tv_nsec == expected.st_ctim.tv_nsec;
 }
 
-bool move_to_trash(GFile *file, TrashedFile &entry, GError **error)
+bool move_to_trash(GFile *file, TrashedFile &entry, GError **error, const DropIdentity *expected)
 {
     entry.original = retain(file);
     ObjectPtr<GFile> parent{g_file_get_parent(file)};
@@ -34,7 +34,8 @@ bool move_to_trash(GFile *file, TrashedFile &entry, GError **error)
 #else
     int fd = -1;
 #endif
-    bool moved = g_file_trash(file, nullptr, error);
+    bool moved = (!expected || expected->matches(file, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, error)) &&
+                 g_file_trash(file, nullptr, error);
     if (fd < 0)
         return moved;
     g_autofree char *stored = nullptr;

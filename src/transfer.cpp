@@ -76,9 +76,9 @@ static void transfer_worker(GTask *task, gpointer, gpointer data, GCancellable *
         if (transfer->move && g_file_equal(destination.get(), source))
             transfer->complete = false;
         else if (transfer->move)
-            remember_file(transfer->undo, destination.get(), source, *identity);
+            remember_move(transfer->undo, destination.get(), source, file_identity(destination.get()), *identity);
         else
-            remember_file(transfer->undo, destination.get());
+            remember_new_file(transfer->undo, destination.get(), FileOrigin::copied);
         g_task_return_pointer(task, destination.release(), g_object_unref);
     }
     else
@@ -225,7 +225,7 @@ static void receive_files(Transfer *data, const GValue *value, GError *error)
         trash_files(grid, files, [drop = GDK_DROP(g_object_ref(drop)), action](bool ok)
                     {
             gdk_drop_finish(drop, ok ? action : GdkDragAction{});
-            g_object_unref(drop); }, transfer->source_identities);
+            g_object_unref(drop); }, transfer->source_identities.get());
         return;
     }
     auto *list = static_cast<GdkFileList *>(g_value_get_boxed(value));
