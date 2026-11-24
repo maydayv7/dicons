@@ -27,7 +27,7 @@ esac
 
 useradd -m builder
 cd /home/builder
-export GTK_A11Y=none GDK_BACKEND=x11 GSK_RENDERER=cairo DICONS_TEST_DISPLAY=1 DICONS_TEST_PRIVATE_CLIPBOARD=1
+export GTK_A11Y=none GDK_BACKEND=x11 GDK_DEBUG=no-portals GSK_RENDERER=cairo DICONS_TEST_DISPLAY=1 DICONS_TEST_PRIVATE_CLIPBOARD=1
 export CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL:-4}
 as_builder=(runuser -u builder --)
 with_display=(dbus-run-session -- xvfb-run -a)

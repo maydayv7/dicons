@@ -31,6 +31,9 @@ static void desktop_folder_setting()
     const auto custom = data / "My icons";
     fs::create_directories(custom);
     fs::create_directories(g_get_user_config_dir());
+    // Older GLib versions resolve user-dirs.dirs directly from the environment
+    g_autofree char *previous_config = g_strdup(g_getenv("XDG_CONFIG_HOME"));
+    g_setenv("XDG_CONFIG_HOME", g_get_user_config_dir(), true);
     auto set_xdg = [](const fs::path &path)
     {
         std::ofstream(fs::path(g_get_user_config_dir()) / "user-dirs.dirs") << "XDG_DESKTOP_DIR=\"" << path.string() << "\"\n";
@@ -63,6 +66,10 @@ static void desktop_folder_setting()
     folder = open_desktop_folder(settings.get(), &error);
     g_assert_no_error(error);
     g_assert_cmpstr(g_file_peek_path(folder.get()), ==, g_get_home_dir());
+    if (previous_config)
+        g_setenv("XDG_CONFIG_HOME", previous_config, true);
+    else
+        g_unsetenv("XDG_CONFIG_HOME");
 }
 
 static void invalid_desktop_folder()

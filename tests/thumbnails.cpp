@@ -10,7 +10,10 @@ static void write_image(const fs::path &path, guint32 color)
 {
     ObjectPtr<GdkPixbuf> pixels{gdk_pixbuf_new(GDK_COLORSPACE_RGB, false, 8, 40, 20)};
     gdk_pixbuf_fill(pixels.get(), color);
-    g_assert_true(gdk_pixbuf_save(pixels.get(), path.c_str(), "png", nullptr, nullptr));
+    g_autoptr(GError) error = nullptr;
+    const bool saved = gdk_pixbuf_save(pixels.get(), path.c_str(), "png", &error, nullptr);
+    g_assert_no_error(error);
+    g_assert_true(saved);
 }
 
 static void previews()
@@ -83,7 +86,15 @@ static void previews()
 
 int main(int argc, char **argv)
 {
-    g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
+    // Keep system MIME data and image codecs visible while isolating files
+    g_autofree char *root = g_dir_make_tmp("dicons-thumbnails-XXXXXX", nullptr);
+    g_assert_nonnull(root);
+    const fs::path dir = root;
+    g_setenv("XDG_DATA_HOME", (dir / "data").c_str(), true);
+    g_setenv("XDG_CACHE_HOME", (dir / "cache").c_str(), true);
+    g_test_init(&argc, &argv, nullptr);
     g_test_add_func("/thumbnails/generate-cache-invalidate", previews);
-    return g_test_run();
+    int status = g_test_run();
+    fs::remove_all(dir);
+    return status;
 }
