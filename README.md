@@ -111,6 +111,7 @@ The following shows the defaults:
 directory=''
 folders-first=true
 icon-size=48  # 24-128
+grid-density='normal'  # compact/normal/spacious
 show-trash=true
 show-thumbnails=true
 sort-field='name'  # name/type/modified/size

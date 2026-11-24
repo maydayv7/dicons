@@ -2,6 +2,7 @@
 
 #include "gobject_ptr.hpp"
 #include "desktop_sort.hpp"
+#include "desktop_item.hpp"
 #include "trash_icon.hpp"
 #include <gtk/gtk.h>
 
@@ -16,12 +17,12 @@ struct DesktopDirectory
     DesktopDirectory(GFile *folder, GtkApplication *app, GSettings *preferences);
 
     ObjectPtr<GFile> folder;
-    GListModel *entries() const;
     ObjectPtr<GSettings> preferences;
     DesktopSort sorting;
     FileSet staging;
     ObjectPtr<GSimpleAction> show_hidden;
     ObjectPtr<GAction> show_thumbnails;
+    ObjectPtr<DiconsItemUpdates> item_updates{make_item_updates()};
     TrashIcon trash;
     ObjectPtr<GListModel> items;
 

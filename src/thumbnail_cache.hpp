@@ -10,6 +10,7 @@ struct ThumbnailVersion
     guint64 modified;
     guint32 nanoseconds;
     goffset size;
+    std::string file_id;
 
     explicit ThumbnailVersion(GFileInfo *info);
     bool operator==(const ThumbnailVersion &) const = default;

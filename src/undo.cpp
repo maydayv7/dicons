@@ -417,7 +417,7 @@ void change_view(GApplication *app, GSettings *settings, GAction *hidden, const 
     // Restore positions after the sort keys
     using Setting = std::pair<const char *, Variant>;
     std::vector<Setting> before;
-    for (auto key : {"sort-field", "sort-direction", "folders-first", "show-thumbnails", "show-trash", "icon-size", "icon-positions"})
+    for (auto key : {"sort-field", "sort-direction", "folders-first", "show-thumbnails", "show-trash", "icon-size", "grid-density", "icon-positions"})
         before.emplace_back(key, value(g_settings_get_value(settings, key)));
     auto old_hidden = hidden ? value(g_action_get_state(hidden)) : Variant{};
     change();

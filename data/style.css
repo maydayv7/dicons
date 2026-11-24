@@ -30,6 +30,10 @@ window.dicons .desktop-tile {
   border-radius: 6px;
 }
 
+window.dicons gridview.compact .desktop-tile {
+  padding: 1px 4px;
+}
+
 window.dicons gridview > child:selected .desktop-tile {
   background-color: alpha(@theme_selected_bg_color, 0.6);
   color: @theme_selected_fg_color;

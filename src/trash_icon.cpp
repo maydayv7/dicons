@@ -1,4 +1,5 @@
 #include "trash_icon.hpp"
+#include "desktop_item.hpp"
 
 bool is_trash_icon(GFileInfo *info)
 {
@@ -17,8 +18,8 @@ static void set_icon(GFileInfo *info, bool full)
     g_file_info_set_icon(info, icon.get());
 }
 
-TrashIcon::TrashIcon(GSettings *preferences)
-    : visible(g_settings_create_action(preferences, "show-trash")), location_(g_file_new_for_uri("trash:///"))
+TrashIcon::TrashIcon(GSettings *preferences, DiconsItemUpdates *updates)
+    : visible(g_settings_create_action(preferences, "show-trash")), updates_(updates), location_(g_file_new_for_uri("trash:///"))
 {
     g_file_info_set_name(info_.get(), "Trash");
     g_file_info_set_display_name(info_.get(), "Trash");
@@ -135,10 +136,7 @@ void TrashIcon::state_read(GObject *, GAsyncResult *result, gpointer data)
     g_file_info_set_attribute_boolean(self->info_.get(), "dicons::full", full);
     set_icon(self->info_.get(), full);
     if (g_list_model_get_n_items(G_LIST_MODEL(self->items.get())))
-    {
-        gpointer item = self->info_.get();
-        g_list_store_splice(self->items.get(), 0, 1, &item, 1);
-    }
+        notify_item_updated(self->updates_, self->info_.get());
 }
 
 void TrashIcon::refresh()

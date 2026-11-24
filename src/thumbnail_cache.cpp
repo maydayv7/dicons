@@ -7,13 +7,21 @@
 namespace
 {
     constexpr int thumbnail_size = 128;
-    constexpr auto timestamp_attributes = "standard::size,time::modified,time::modified-nsec";
+    constexpr auto timestamp_attributes = "standard::size,time::modified,time::modified-nsec,id::file";
     constexpr auto ns_key = "tEXt::X-dicons::MTimeNS";
+    constexpr auto id_key = "tEXt::X-dicons::FileID";
+
+    const char *source_file_id(GFileInfo *info)
+    {
+        const char *id = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_ID_FILE);
+        return id ? id : "";
+    }
 
     bool current_version(GFile *file, const ThumbnailVersion &version, GCancellable *cancel)
     {
         ObjectPtr<GFileInfo> info{g_file_query_info(file, timestamp_attributes, G_FILE_QUERY_INFO_NONE, cancel, nullptr)};
         return info && version.size == g_file_info_get_size(info.get()) &&
+               version.file_id == source_file_id(info.get()) &&
                version.modified == g_file_info_get_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_TIME_MODIFIED) &&
                version.nanoseconds == g_file_info_get_attribute_uint32(info.get(), G_FILE_ATTRIBUTE_TIME_MODIFIED_NSEC);
     }
@@ -31,9 +39,11 @@ namespace
             { return gdk_pixbuf_get_option(image.get(), name); };
             const char *ns = option(ns_key);
             const char *length = option("tEXt::Thumb::Size");
+            const char *id = option(id_key);
             if (g_strcmp0(option("tEXt::Thumb::URI"), uri) == 0 &&
                 g_strcmp0(option("tEXt::Thumb::MTime"), std::to_string(version.modified).c_str()) == 0 &&
                 (!length || std::to_string(version.size) == length) &&
+                (id ? version.file_id == id : !changed) &&
                 (ns ? std::to_string(version.nanoseconds) == ns : !changed))
                 return image;
         }
@@ -51,7 +61,7 @@ namespace
         if (!gdk_pixbuf_save_to_buffer(image, &png, &length, "png", nullptr,
                                        "tEXt::Thumb::URI", uri, "tEXt::Thumb::MTime", std::to_string(version.modified).c_str(),
                                        "tEXt::Thumb::Size", std::to_string(version.size).c_str(),
-                                       ns_key, std::to_string(version.nanoseconds).c_str(), nullptr))
+                                       ns_key, std::to_string(version.nanoseconds).c_str(), id_key, version.file_id.c_str(), nullptr))
             return;
         g_autoptr(GFile) output = g_file_new_build_filename(dir, filename, nullptr);
         g_file_replace_contents(output, png, length, nullptr, false,
@@ -65,7 +75,7 @@ ThumbnailVersion::ThumbnailVersion(GFileInfo *info)
       target_path(symlink_target_path(info) ? symlink_target_path(info) : ""),
       modified(g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED)),
       nanoseconds(g_file_info_get_attribute_uint32(info, G_FILE_ATTRIBUTE_TIME_MODIFIED_NSEC)),
-      size(g_file_info_get_size(info))
+      size(g_file_info_get_size(info)), file_id(source_file_id(info))
 {
 }
 

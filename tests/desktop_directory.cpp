@@ -6,6 +6,7 @@
 #define G_SETTINGS_ENABLE_BACKEND
 #include <gio/gsettingsbackend.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -397,6 +398,13 @@ static void pinned_trash()
     g_action_activate(G_ACTION(directory.trash.visible.get()), nullptr);
     g_assert_true(gtk_selection_model_is_selected(GTK_SELECTION_MODEL(selection.get()), 1));
 
+    guint changes = 0, redraws = 0;
+    g_signal_connect(directory.trash.items.get(), "items-changed", G_CALLBACK(+[](GListModel *, guint, guint, guint, guint *n)
+                                                                              { ++*n; }),
+                     &changes);
+    g_signal_connect(directory.item_updates.get(), "item-updated", G_CALLBACK(+[](DiconsItemUpdates *, GFileInfo *info, guint *n)
+                                                                              { if (is_trash_icon(info)) ++*n; }),
+                     &redraws);
     const auto files = data / "Trash/files";
     fs::create_directories(files);
     std::ofstream(files / "from outside") << "example";
@@ -406,6 +414,10 @@ static void pinned_trash()
     fs::remove(files / "from outside");
     g_assert_true(wait_for([&]
                            { return !full(); }));
+    g_assert_cmpuint(changes, ==, 0);
+    g_assert_cmpuint(redraws, ==, 2);
+    g_signal_handlers_disconnect_by_data(directory.trash.items.get(), &changes);
+    g_signal_handlers_disconnect_by_data(directory.item_updates.get(), &redraws);
 }
 
 static void atomic_saves()
@@ -669,6 +681,44 @@ static void symlink_targets()
     }
 }
 
+static void metadata_burst()
+{
+    constexpr guint count = 4000;
+    constexpr guint edits = 100;
+    const auto root = fs::path(g_get_user_data_dir()) / "Desktop";
+    fs::create_directories(root);
+    for (guint i = 0; i < count; ++i)
+        std::ofstream{root / std::to_string(i)};
+    ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
+    ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
+    auto preferences = test_preferences();
+    g_settings_set_boolean(preferences.get(), "show-trash", false);
+    DesktopDirectory directory{folder.get(), app.get(), preferences.get()};
+    g_assert_true(wait_for([&]
+                           { return g_list_model_get_n_items(directory.items.get()) == count; }));
+    GridLayout layout(directory.items.get(), preferences.get());
+    layout.resize(25, 20);
+    auto *slots = G_LIST_MODEL(layout.slots.get());
+    std::vector<ObjectPtr<GFileInfo>> files;
+    for (guint i = 0; i < edits; ++i)
+        files.emplace_back(G_FILE_INFO(g_list_model_get_item(slots, i)));
+    g_autofree char *uri = g_file_get_uri(item_file(files.front().get()));
+    write_positions(preferences.get(), {{uri, {3, 2}}});
+    guint changes = 0;
+    g_signal_connect(directory.items.get(), "items-changed", G_CALLBACK(+[](GListModel *, guint, guint, guint, guint *changes)
+                                                                        { ++*changes; }),
+                     &changes);
+    g_test_timer_start();
+    for (const auto &info : files)
+        std::ofstream(root / g_file_info_get_name(info.get())) << "x";
+    g_assert_true(wait_for([&]
+                           { return std::ranges::all_of(files, [](const auto &info)
+                                                        { return g_file_info_get_size(info.get()) == 1; }); }));
+    g_test_message("Update %u of %u positioned desktop items: %.3f s, %u model changes", edits, count, g_test_timer_elapsed(), changes);
+    g_assert_cmpuint(changes, ==, 0);
+    g_signal_handlers_disconnect_by_data(directory.items.get(), &changes);
+}
+
 static void directory_burst()
 {
     constexpr guint initial = 4000;
@@ -733,6 +783,9 @@ int main(int argc, char **argv)
     g_test_add_func("/directory/launcher-order", launcher_order);
     g_test_add_func("/directory/symlink-targets", symlink_targets);
     if (g_test_perf())
+    {
         g_test_add_func("/directory/burst", directory_burst);
+        g_test_add_func("/directory/metadata-burst", metadata_burst);
+    }
     return g_test_run();
 }

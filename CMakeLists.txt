@@ -109,6 +109,7 @@ if(BUILD_TESTING)
     dicons_test(undo undo.cpp)
     set_tests_properties(desktop-undo PROPERTIES ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
     dicons_test(file-actions file_actions.cpp)
+    target_sources(test-file-actions PRIVATE dicons-resources.c)
     set_tests_properties(desktop-file-actions PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
 endif()
 

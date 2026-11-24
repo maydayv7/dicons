@@ -12,6 +12,15 @@
       <default>48</default>
       <summary>Desktop icon size in pixels</summary>
     </key>
+    <key name="grid-density" type="s">
+      <choices>
+        <choice value="compact" />
+        <choice value="normal" />
+        <choice value="spacious" />
+      </choices>
+      <default>'normal'</default>
+      <summary>Spacing between desktop icons</summary>
+    </key>
     <key name="icon-positions" type="a{s(uu)}">
       <default>{}</default>
       <summary>Manually arranged grid columns and rows by file URI</summary>

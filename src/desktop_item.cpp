@@ -3,6 +3,31 @@
 #include <gio/gdesktopappinfo.h>
 #include <string_view>
 
+struct DiconsItemUpdates
+{
+    GObject parent;
+};
+using DiconsItemUpdatesClass = GObjectClass;
+G_DEFINE_TYPE(DiconsItemUpdates, item_updates, G_TYPE_OBJECT)
+
+static guint item_updated;
+static void item_updates_class_init(DiconsItemUpdatesClass *klass)
+{
+    item_updated = g_signal_new("item-updated", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0,
+                                nullptr, nullptr, nullptr, G_TYPE_NONE, 1, G_TYPE_FILE_INFO);
+}
+static void item_updates_init(DiconsItemUpdates *) {}
+
+ObjectPtr<DiconsItemUpdates> make_item_updates()
+{
+    return ObjectPtr<DiconsItemUpdates>{static_cast<DiconsItemUpdates *>(g_object_new(item_updates_get_type(), nullptr))};
+}
+
+void notify_item_updated(DiconsItemUpdates *updates, GFileInfo *info)
+{
+    g_signal_emit(updates, item_updated, 0, info);
+}
+
 bool has_launcher_name(GFileInfo *info)
 {
     return std::string_view{g_file_info_get_name(info)}.ends_with(".desktop");

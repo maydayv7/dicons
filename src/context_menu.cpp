@@ -39,6 +39,11 @@ static ObjectPtr<GMenu> background_menu(GFile *folder)
     g_menu_append(menu.get(), "Paste", "desktop.paste");
     append_sort_menu(menu.get());
     g_autoptr(GMenu) display = g_menu_new();
+    g_autoptr(GMenu) density = g_menu_new();
+    g_menu_append(density, "Compact", "desktop.grid-density::compact");
+    g_menu_append(density, "Normal", "desktop.grid-density::normal");
+    g_menu_append(density, "Spacious", "desktop.grid-density::spacious");
+    g_menu_append_submenu(display, "Grid Density", G_MENU_MODEL(density));
     g_menu_append(display, "Show Hidden Items", "desktop.show-hidden");
     g_menu_append(display, "Show Thumbnails", "desktop.show-thumbnails");
     g_menu_append(display, "Show Trash", "desktop.show-trash");
@@ -211,6 +216,8 @@ void attach_context_menu(GtkWindow *window, GtkGridView *grid, const DesktopDire
     add_view_action(group, G_ACTION(directory.show_hidden.get()));
     add_view_action(group, directory.show_thumbnails.get());
     add_view_action(group, directory.trash.visible.get());
+    ObjectPtr<GAction> density{g_settings_create_action(directory.preferences.get(), "grid-density")};
+    add_view_action(group, density.get());
     gtk_widget_insert_action_group(desktop, "desktop", G_ACTION_GROUP(group));
     ObjectPtr<GSimpleActionGroup> sorting{g_simple_action_group_new()};
     g_auto(GStrv) names = g_action_group_list_actions(G_ACTION_GROUP(directory.sorting.actions.get()));

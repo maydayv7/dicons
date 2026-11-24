@@ -26,13 +26,30 @@ namespace
         return *static_cast<Grid *>(g_object_get_data(G_OBJECT(gtk_grid_view_get_factory(grid)), "grid"));
     }
 
-    int row_height(GtkWidget *widget, int size)
+    struct CellSize
     {
+        int width;
+        int height;
+    };
+
+    CellSize measure_cell(GtkGridView *grid, GSettings *settings)
+    {
+        GtkWidget *widget = GTK_WIDGET(grid);
+        int size = g_settings_get_int(settings, "icon-size");
+        g_autofree char *density = g_settings_get_string(settings, "grid-density");
+        bool compact = g_str_equal(density, "compact");
+        if (compact)
+            gtk_widget_add_css_class(widget, "compact");
+        else
+            gtk_widget_remove_css_class(widget, "compact");
         g_autoptr(PangoLayout) lines = gtk_widget_create_pango_layout(widget, "Ag\nAg");
         int height;
         pango_layout_get_pixel_size(lines, nullptr, &height);
-        // Allow label lines, icon-to-label gap and vertical padding
-        return size + height + 10;
+        if (compact)
+            return {std::max(52, size + 12), size + height + 6};
+        if (g_str_equal(density, "spacious"))
+            return {std::max(80, size + 40), size + height + 26};
+        return {std::max(64, size + 24), size + height + 10};
     }
 }
 
@@ -79,11 +96,10 @@ static void bind_item(GtkListItemFactory *, GtkListItem *item, Grid *grid)
     gtk_list_item_set_activatable(item, occupied);
     gtk_list_item_set_focusable(item, occupied);
     gtk_widget_set_visible(tile_content(item), occupied);
+    grid->bound.emplace(info, item);
+    gtk_widget_set_size_request(gtk_list_item_get_child(item), -1, grid->cell_height);
     if (occupied)
-    {
-        grid->bound.emplace(info, item);
         refresh_item(item);
-    }
 }
 
 static void unbind_item(GtkListItemFactory *, GtkListItem *item, Grid *grid)
@@ -92,14 +108,10 @@ static void unbind_item(GtkListItemFactory *, GtkListItem *item, Grid *grid)
     unbind_item_icon(gtk_widget_get_first_child(tile_content(item)));
 }
 
-static void entry_updated(GListModel *entries, guint position, guint removed, guint added, GtkGridView *grid)
+static void entry_updated(DiconsItemUpdates *, GFileInfo *changed, GtkGridView *grid)
 {
-    if (removed == 1 && added == 1)
-    {
-        ObjectPtr<GFileInfo> changed{G_FILE_INFO(g_list_model_get_item(entries, position))};
-        if (auto *item = bound_item(grid, changed.get()))
-            refresh_item(item);
-    }
+    if (auto *item = bound_item(grid, changed))
+        refresh_item(item);
 }
 
 struct DesktopDrag
@@ -134,39 +146,44 @@ std::shared_ptr<const DragIdentities> drag_identities(GdkDrop *drop)
     return drag ? drag->identities : nullptr;
 }
 
-bool move_icons(GdkDrop *drop, GtkGridView *grid, GtkWidget *window, double x, double y)
+guint grid_position_at(GtkGridView *grid, double x, double y)
 {
-    auto *drag = desktop_drag(drop);
     auto &view = state(grid);
-    if (!drag)
-        return false;
-    auto *picked = gtk_widget_pick(window, x, y, GTK_PICK_DEFAULT);
-    auto move = [&](guint position)
-    {
-        bool moved = false;
-        change_view(G_APPLICATION(gtk_window_get_application(GTK_WINDOW(window))), view.layout.settings.get(), nullptr,
-                    [&]
-                    { moved = view.layout.move(drag->uris, position); });
-        return moved;
-    };
-    if (auto *slot = target_slot(picked, grid))
-        return move(gtk_list_item_get_position(slot));
+    auto *widget = GTK_WIDGET(grid);
+    int width = gtk_widget_get_width(widget);
+    if (!view.cell_height || x < 0 || x >= width || y < 0 || y >= gtk_widget_get_height(widget))
+        return GTK_INVALID_LIST_POSITION;
+    if (auto *slot = target_slot(gtk_widget_pick(widget, x, y, GTK_PICK_DEFAULT), grid))
+        return gtk_list_item_get_position(slot);
 
-    // GTK has no list item below the final row
-    graphene_point_t from{float(x), float(y)}, point;
-    if (!gtk_widget_compute_point(window, GTK_WIDGET(grid), &from, &point) || !view.cell_height)
-        return false;
+    // GTK has no list item for a free cell beyond end of the model
     auto &layout = view.layout;
-    int width = gtk_widget_get_width(GTK_WIDGET(grid));
-    int pitch = std::max(1, width / int(layout.columns));
-    int column = std::clamp(int(point.x) / pitch, 0, int(layout.columns) - 1);
-    if (gtk_widget_get_direction(GTK_WIDGET(grid)) == GTK_TEXT_DIR_RTL)
-        column = layout.columns - 1 - column;
+    int pixel = int(x);
+    if (gtk_widget_get_direction(widget) == GTK_TEXT_DIR_RTL)
+        pixel = width - 1 - pixel;
+    guint column = guint64(pixel) * layout.columns / width;
     auto *vertical = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(grid));
     guint count = g_list_model_get_n_items(G_LIST_MODEL(layout.slots.get()));
     guint rows = std::max(layout.rows, (count + layout.columns - 1) / layout.columns);
-    int row = std::clamp(int(point.y + gtk_adjustment_get_value(vertical)) / view.cell_height, 0, int(rows) - 1);
-    return move(row * layout.columns + column);
+    int row = std::clamp(int(y + gtk_adjustment_get_value(vertical)) / view.cell_height, 0, int(rows) - 1);
+    return row * layout.columns + column;
+}
+
+bool move_icons(GdkDrop *drop, GtkGridView *grid, GtkWidget *window, double x, double y)
+{
+    auto *drag = desktop_drag(drop);
+    graphene_point_t from{float(x), float(y)}, point;
+    if (!drag || !gtk_widget_compute_point(window, GTK_WIDGET(grid), &from, &point))
+        return false;
+    guint position = grid_position_at(grid, point.x, point.y);
+    if (position == GTK_INVALID_LIST_POSITION)
+        return false;
+    auto &layout = state(grid).layout;
+    bool moved = false;
+    change_view(G_APPLICATION(gtk_window_get_application(GTK_WINDOW(window))), layout.settings.get(), nullptr,
+                [&]
+                { moved = layout.move(drag->uris, position); });
+    return moved;
 }
 
 static GdkContentProvider *prepare_drag(GtkDragSource *, double, double, GtkListItem *item)
@@ -214,11 +231,6 @@ static void drag_began(GtkDragSource *, GdkDrag *gdk_drag, GtkListItem *item)
     }
 }
 
-static void cell_size_changed(GSettings *settings, const char *, GtkWidget *cell)
-{
-    gtk_widget_set_size_request(cell, -1, row_height(cell, g_settings_get_int(settings, "icon-size")));
-}
-
 static void setup_item(GtkListItemFactory *, GtkListItem *item, Grid *grid)
 {
     auto *settings = grid->layout.settings.get();
@@ -241,8 +253,6 @@ static void setup_item(GtkListItemFactory *, GtkListItem *item, Grid *grid)
     gtk_overlay_add_overlay(GTK_OVERLAY(cell), box);
     g_object_set_data(G_OBJECT(cell), "desktop-item", item);
     gtk_list_item_set_child(item, cell);
-    cell_size_changed(settings, nullptr, cell);
-    g_signal_connect_object(settings, "changed::icon-size", G_CALLBACK(cell_size_changed), cell, GConnectFlags{});
 
     GtkDragSource *drag = gtk_drag_source_new();
     gtk_drag_source_set_actions(drag, GDK_ACTION_COPY);
@@ -253,17 +263,22 @@ static void setup_item(GtkListItemFactory *, GtkListItem *item, Grid *grid)
 
 static void arrange(GtkGridView *grid)
 {
-    auto &layout = state(grid).layout;
+    auto &view = state(grid);
+    auto &layout = view.layout;
     auto *scroll = GTK_SCROLLABLE(grid);
     auto *horizontal = gtk_scrollable_get_hadjustment(scroll);
     auto *vertical = gtk_scrollable_get_vadjustment(scroll);
-    int size = g_settings_get_int(layout.settings.get(), "icon-size");
     int width = horizontal ? gtk_adjustment_get_page_size(horizontal) : 0;
     int height = vertical ? gtk_adjustment_get_page_size(vertical) : 0;
-    int cell_width = std::max(64, size + 24);
-    guint columns = std::clamp(width / cell_width, 1, 128);
-    state(grid).cell_height = row_height(GTK_WIDGET(grid), size);
-    guint rows = std::max(1, height / state(grid).cell_height);
+    CellSize cell = measure_cell(grid, layout.settings.get());
+    guint columns = std::clamp(width / cell.width, 1, 128);
+    guint rows = std::max(1, height / cell.height);
+    if (view.cell_height != cell.height)
+    {
+        view.cell_height = cell.height;
+        for (auto &[info, item] : view.bound)
+            gtk_widget_set_size_request(gtk_list_item_get_child(item), -1, cell.height);
+    }
     gtk_grid_view_set_max_columns(grid, columns);
     gtk_grid_view_set_min_columns(grid, columns);
     layout.resize(columns, rows);
@@ -337,11 +352,11 @@ GtkGridView *create_icon_grid(const DesktopDirectory &directory, GtkApplication 
     auto *selection = gtk_multi_selection_new(G_LIST_MODEL(g_object_ref(data->layout.slots.get())));
     g_signal_connect(selection, "selection-changed", G_CALLBACK(exclude_empty_cells), nullptr);
     auto *grid = GTK_GRID_VIEW(gtk_grid_view_new(GTK_SELECTION_MODEL(selection), factory));
-    g_signal_connect_object(directory.preferences.get(), "changed::icon-size", G_CALLBACK(+[](GSettings *, const char *, GtkGridView *grid)
-                                                                                          { arrange(grid); }),
-                            grid, GConnectFlags{});
-    g_signal_connect_object(directory.entries(), "items-changed", G_CALLBACK(entry_updated), grid, GConnectFlags{});
-    g_signal_connect_object(directory.trash.items.get(), "items-changed", G_CALLBACK(entry_updated), grid, GConnectFlags{});
+    for (auto signal : {"changed::icon-size", "changed::grid-density"})
+        g_signal_connect_object(directory.preferences.get(), signal, G_CALLBACK(+[](GSettings *, const char *, GtkGridView *grid)
+                                                                                { arrange(grid); }),
+                                grid, GConnectFlags{});
+    g_signal_connect_object(directory.item_updates.get(), "item-updated", G_CALLBACK(entry_updated), grid, GConnectFlags{});
     gtk_grid_view_set_enable_rubberband(grid, TRUE);
     g_signal_connect_object(grid, "activate", G_CALLBACK(open_item), app, GConnectFlags{});
     return grid;

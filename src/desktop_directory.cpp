@@ -4,6 +4,7 @@
 #include "notifications.hpp"
 #include "symlink.hpp"
 #include "grid_layout.hpp"
+#include "thumbnail_cache.hpp"
 
 #include <glib/gstdio.h>
 #include <cerrno>
@@ -92,10 +93,13 @@ class DesktopDirectory::Updates : public std::enable_shared_from_this<Updates>
 public:
     ObjectPtr<GListStore> entries{g_list_store_new(G_TYPE_FILE_INFO)};
 
-    void start(GFile *folder, GFileMonitor *monitor, GtkApplication *app, GSettings *settings)
+    void start(const DesktopDirectory &directory, GFileMonitor *monitor, GtkApplication *app, GtkFilter *filter)
     {
-        folder_ = retain(folder);
-        settings_ = retain(settings);
+        folder_ = retain(directory.folder.get());
+        settings_ = retain(directory.preferences.get());
+        filter_ = retain(filter);
+        sorter_ = retain(GTK_SORTER(directory.sorting.sorter.get()));
+        item_updates_ = retain(directory.item_updates.get());
         if (monitor)
         {
             monitor_ = retain(monitor);
@@ -106,7 +110,7 @@ public:
         g_signal_connect(scan_.get(), "items-changed", G_CALLBACK(scanned_items), this);
         g_signal_connect(scan_.get(), "notify::loading", G_CALLBACK(scan_progress), this);
         g_signal_connect_object(scan_.get(), "notify::error", G_CALLBACK(directory_error), app, GConnectFlags{});
-        gtk_directory_list_set_file(scan_.get(), folder);
+        gtk_directory_list_set_file(scan_.get(), folder_.get());
     }
 
     ~Updates()
@@ -125,6 +129,9 @@ private:
     ObjectPtr<GtkDirectoryList> scan_;
     ObjectPtr<GFile> folder_;
     ObjectPtr<GSettings> settings_;
+    ObjectPtr<GtkFilter> filter_;
+    ObjectPtr<GtkSorter> sorter_;
+    ObjectPtr<DiconsItemUpdates> item_updates_;
     ObjectPtr<GFileMonitor> monitor_;
     std::deque<ObjectPtr<GFile>> pending_;
     FileSet queued_ = make_file_set();
@@ -253,11 +260,7 @@ private:
             {
                 if (info)
                 {
-                    // GtkMultiSelection tracks the object when its sorted position changes
-                    g_file_info_copy_into(info, current.get());
-                    update_link_watch(current.get());
-                    gpointer item = current.get();
-                    g_list_store_splice(entries.get(), i, 1, &item, 1);
+                    update_item(i, current.get(), info);
                 }
                 else
                 {
@@ -274,6 +277,30 @@ private:
         }
     }
 
+    void update_item(guint index, GFileInfo *current, GFileInfo *next)
+    {
+        bool visible = gtk_filter_match(filter_.get(), current);
+        bool membership_changed = visible != gtk_filter_match(filter_.get(), next);
+        bool order_changed = visible && gtk_sorter_compare(sorter_.get(), current, next) != GTK_ORDERING_EQUAL;
+        bool previews_enabled = g_settings_get_boolean(settings_.get(), "show-thumbnails");
+        bool preview = previews_enabled && can_preview(next);
+        bool redraw = g_strcmp0(item_label(current), item_label(next)) != 0 ||
+                      !g_icon_equal(g_file_info_get_icon(current), g_file_info_get_icon(next)) ||
+                      g_file_info_get_file_type(current) != g_file_info_get_file_type(next) ||
+                      g_file_info_get_is_symlink(current) != g_file_info_get_is_symlink(next) ||
+                      (previews_enabled && can_preview(current) != preview) ||
+                      (preview && ThumbnailVersion(current) != ThumbnailVersion(next));
+        g_file_info_copy_into(next, current);
+        update_link_watch(current);
+        if (membership_changed || order_changed)
+        {
+            gpointer item = current;
+            g_list_store_splice(entries.get(), index, 1, &item, 1);
+        }
+        if (redraw)
+            notify_item_updated(item_updates_.get(), current);
+    }
+
     void update_link_watch(GFileInfo *info)
     {
         watch_symlink_target(info, [weak = weak_from_this(), info]
@@ -288,7 +315,7 @@ private:
 
 DesktopDirectory::DesktopDirectory(GFile *location, GtkApplication *app, GSettings *preferences)
     : folder(retain(location)), preferences(retain(preferences)), sorting(preferences), staging(make_file_set()),
-      show_thumbnails(g_settings_create_action(preferences, "show-thumbnails")), trash(preferences),
+      show_thumbnails(g_settings_create_action(preferences, "show-thumbnails")), trash(preferences, item_updates.get()),
       updates_(std::make_shared<Updates>())
 {
     g_autoptr(GError) error = nullptr;
@@ -309,10 +336,5 @@ DesktopDirectory::DesktopDirectory(GFile *location, GtkApplication *app, GSettin
     g_list_store_append(sections, trash.items.get());
     g_list_store_append(sections, sorted.get());
     items.reset(G_LIST_MODEL(gtk_flatten_list_model_new(G_LIST_MODEL(sections))));
-    updates_->start(location, changes.get(), app, preferences);
-}
-
-GListModel *DesktopDirectory::entries() const
-{
-    return G_LIST_MODEL(updates_->entries.get());
+    updates_->start(*this, changes.get(), app, GTK_FILTER(filter));
 }

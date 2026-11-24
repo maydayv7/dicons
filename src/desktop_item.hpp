@@ -1,6 +1,11 @@
 #pragma once
 
+#include "gobject_ptr.hpp"
 #include <gio/gio.h>
+
+struct DiconsItemUpdates;
+ObjectPtr<DiconsItemUpdates> make_item_updates();
+void notify_item_updated(DiconsItemUpdates *updates, GFileInfo *info);
 
 bool has_launcher_name(GFileInfo *info);
 bool is_desktop_launcher(GFileInfo *info);

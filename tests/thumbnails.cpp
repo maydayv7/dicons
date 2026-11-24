@@ -34,7 +34,7 @@ static void previews()
     ObjectPtr<GCancellable> cancel{g_cancellable_new()};
     auto version_for = [](GFile *source)
     {
-        ObjectPtr<GFileInfo> info{g_file_query_info(source, "standard::size,standard::content-type,time::*",
+        ObjectPtr<GFileInfo> info{g_file_query_info(source, "standard::size,standard::content-type,time::*,id::file",
                                                     G_FILE_QUERY_INFO_NONE, nullptr, nullptr)};
         return ThumbnailVersion{info.get()};
     };
@@ -57,12 +57,26 @@ static void previews()
     std::ofstream(entry) << "incomplete PNG";
     g_assert_null(load_thumbnail(file.get(), version, cancel.get()).get());
 
+    auto replacement = data / "new.png";
+    write_image(replacement, 0x2211aaff);
+    auto size = std::max(fs::file_size(fixture), fs::file_size(replacement));
+    fs::resize_file(fixture, size);
+    fs::resize_file(replacement, size);
     ObjectPtr<GFile> image{g_file_new_for_path(fixture.c_str())};
     auto image_version = version_for(image.get());
     image_version.mime = "image/png";
     auto direct = load_thumbnail(image.get(), image_version, cancel.get());
     g_assert_nonnull(direct.get());
     g_assert_cmpint(gdk_pixbuf_get_width(direct.get()), ==, 2 * gdk_pixbuf_get_height(direct.get()));
+    fs::last_write_time(replacement, fs::last_write_time(fixture));
+    fs::rename(replacement, fixture);
+    auto replaced = version_for(image.get());
+    replaced.mime = "image/png";
+    g_assert_cmpuint(replaced.nanoseconds, ==, image_version.nanoseconds);
+    g_assert_true(replaced != image_version);
+    auto refreshed = load_thumbnail(image.get(), replaced, cancel.get(), true);
+    g_assert_nonnull(refreshed.get());
+    g_assert_cmpuint(gdk_pixbuf_read_pixels(refreshed.get())[0], ==, 0x22);
     g_cancellable_cancel(cancel.get());
     g_assert_null(load_thumbnail(image.get(), image_version, cancel.get()).get());
 }

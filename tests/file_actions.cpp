@@ -1,4 +1,7 @@
 #include "desktop_directory.hpp"
+#include "desktop_windows.hpp"
+#include "context_menu.hpp"
+#include "grid_layout.hpp"
 #include "icon_grid.hpp"
 #include "inline_rename.hpp"
 #include "preferences.hpp"
@@ -174,6 +177,172 @@ static void queued_trash()
     g_assert_false(fs::exists(d.root / "first"));
 }
 
+static GtkGridView *mount_grid(Desktop &desktop, DesktopDirectory &directory, GtkFixed *fixed, int width, int top)
+{
+    auto *grid = create_icon_grid(directory, desktop.app.get());
+    auto *scroll = GTK_SCROLLED_WINDOW(gtk_scrolled_window_new());
+    gtk_scrolled_window_set_policy(scroll, GTK_POLICY_NEVER, GTK_POLICY_EXTERNAL);
+    gtk_widget_set_size_request(GTK_WIDGET(scroll), width, 340);
+    gtk_fixed_put(fixed, GTK_WIDGET(scroll), 0, top);
+    attach_grid_viewport(scroll, grid);
+    return grid;
+}
+
+static void metadata_refresh()
+{
+    Desktop desktop;
+    auto launcher = desktop.root / "mail.desktop";
+    auto set_label = [&](const char *label)
+    { std::ofstream(launcher) << "[Desktop Entry]\nType=Application\nExec=true\nName=" << label << '\n'; };
+    set_label("Mail");
+    std::ofstream(desktop.root / "unrelated.txt") << "abc";
+    g_settings_set_boolean(desktop.settings.get(), "show-trash", false);
+    g_settings_set_boolean(desktop.settings.get(), "show-thumbnails", false);
+    DesktopDirectory directory(desktop.file(".").get(), desktop.app.get(), desktop.settings.get());
+    auto *fixed = GTK_FIXED(gtk_fixed_new());
+    gtk_window_set_child(desktop.window, GTK_WIDGET(fixed));
+    auto *left = mount_grid(desktop, directory, fixed, 621, 0);
+    auto *right = mount_grid(desktop, directory, fixed, 320, 340);
+    attach_inline_rename(desktop.window, left);
+    auto file = desktop.file("mail.desktop");
+    g_autofree char *uri = g_file_get_uri(file.get());
+    write_positions(desktop.settings.get(), {{uri, {2, 1}}});
+    ObjectPtr<GFileInfo> info;
+    wait_for([&]
+             {
+        info.reset(G_FILE_INFO(g_list_model_get_item(directory.items.get(), 0)));
+        return info && g_strcmp0(item_label(info.get()), "Mail") == 0 &&
+               bound_item(left, info.get()) && bound_item(right, info.get()) &&
+               gtk_list_item_get_position(bound_item(left, info.get())) == gtk_grid_view_get_min_columns(left) + 2; });
+    auto *tile = bound_item(left, info.get());
+    gtk_selection_model_select_item(gtk_grid_view_get_model(left), gtk_list_item_get_position(tile), true);
+    rename_selection(left);
+    auto *entry = gtk_widget_get_last_child(tile_content(tile));
+    g_assert_true(GTK_IS_ENTRY(entry) && gtk_widget_get_visible(entry));
+    gtk_editable_set_text(GTK_EDITABLE(entry), "my draft");
+
+    guint changes = 0, redraws = 0;
+    g_signal_connect(directory.items.get(), "items-changed", G_CALLBACK(+[](GListModel *, guint, guint, guint, guint *n)
+                                                                        { ++*n; }),
+                     &changes);
+    g_signal_connect(directory.item_updates.get(), "item-updated", G_CALLBACK(+[](DiconsItemUpdates *, GFileInfo *, guint *n)
+                                                                              { ++*n; }),
+                     &redraws);
+    auto label = [&](GtkGridView *grid)
+    {
+        auto *box = tile_content(bound_item(grid, info.get()));
+        return gtk_label_get_text(GTK_LABEL(gtk_widget_get_next_sibling(gtk_widget_get_first_child(box))));
+    };
+    set_label("MAIL");
+    wait_for([&]
+             { return g_str_equal(label(left), "MAIL") && g_str_equal(label(right), "MAIL"); });
+    std::ofstream(desktop.root / "unrelated.txt") << "longer";
+    wait_for([&]
+             {
+        ObjectPtr<GFileInfo> other{G_FILE_INFO(g_list_model_get_item(directory.items.get(), 1))};
+        return other && g_file_info_get_size(other.get()) == 6; });
+    g_assert_cmpuint(changes, ==, 0);
+    g_assert_cmpuint(redraws, ==, 1);
+    g_assert_true(bound_item(left, info.get()) == tile && gtk_list_item_get_selected(tile));
+    g_assert_false(gtk_list_item_get_selected(bound_item(right, info.get())));
+    g_assert_true(gtk_widget_get_visible(entry));
+    g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(entry)), ==, "my draft");
+    g_signal_handlers_disconnect_by_data(directory.items.get(), &changes);
+    g_signal_handlers_disconnect_by_data(directory.item_updates.get(), &redraws);
+    gtk_window_set_child(desktop.window, nullptr);
+}
+
+static void grid_density()
+{
+    Desktop desktop;
+    std::ofstream(desktop.root / "placed.txt") << "text";
+    g_settings_set_boolean(desktop.settings.get(), "show-trash", false);
+    g_settings_set_boolean(desktop.settings.get(), "show-thumbnails", false);
+    DesktopDirectory directory(desktop.file(".").get(), desktop.app.get(), desktop.settings.get());
+    gtk_widget_add_css_class(GTK_WIDGET(desktop.window), "dicons");
+    auto *overlay = GTK_OVERLAY(gtk_overlay_new());
+    gtk_window_set_child(desktop.window, GTK_WIDGET(overlay));
+    auto *fixed = GTK_FIXED(gtk_fixed_new());
+    gtk_overlay_set_child(overlay, GTK_WIDGET(fixed));
+    constexpr int width = 621;
+    auto *grid = mount_grid(desktop, directory, fixed, width, 0);
+    auto *narrow = mount_grid(desktop, directory, fixed, 60, 340);
+    attach_context_menu(desktop.window, grid, directory);
+    auto file = desktop.file("placed.txt");
+    g_autofree char *uri = g_file_get_uri(file.get());
+    write_positions(desktop.settings.get(), {{uri, {7, 1}}});
+    ObjectPtr<GFileInfo> info;
+    wait_for([&]
+             {
+        info.reset(G_FILE_INFO(g_list_model_get_item(directory.items.get(), 0)));
+        return info && bound_item(grid, info.get()) && bound_item(narrow, info.get()) &&
+               gtk_grid_view_get_min_columns(grid) == width / 72; });
+    auto *widget = GTK_WIDGET(grid);
+    g_assert_cmpint(gtk_widget_get_width(widget), ==, width);
+    auto check = [&](int columns, int position)
+    {
+        auto *item = bound_item(grid, info.get());
+        g_assert_nonnull(item);
+        auto *cell = gtk_list_item_get_child(item);
+        int height;
+        gtk_widget_get_size_request(cell, nullptr, &height);
+        graphene_rect_t bounds;
+        wait_for([&]
+                 { return gtk_widget_compute_bounds(cell, widget, &bounds) && int(bounds.size.height) == height &&
+                          int(bounds.origin.y) == position / columns * height &&
+                          grid_position_at(grid, bounds.origin.x + bounds.size.width / 2, bounds.origin.y + height / 2) == guint(position); });
+        g_assert_cmpuint(gtk_grid_view_get_min_columns(grid), ==, columns);
+        g_assert_cmpuint(gtk_list_item_get_position(item), ==, position);
+        g_assert_cmpuint(gtk_list_item_get_position(bound_item(narrow, info.get())), ==, 0);
+        auto saved = read_positions(desktop.settings.get()).at(uri);
+        g_assert_cmpuint(saved.column, ==, 7);
+        g_assert_cmpuint(saved.row, ==, 1);
+        auto *icon = gtk_widget_get_first_child(tile_content(item));
+        auto *base = GTK_IMAGE(gtk_overlay_get_child(GTK_OVERLAY(icon)));
+        g_assert_cmpint(gtk_image_get_pixel_size(base), ==, g_settings_get_int(desktop.settings.get(), "icon-size"));
+        guint row = std::min(2, 340 / height - 1);
+        int boundary = (width + columns - 1) / columns;
+        bool rtl = gtk_widget_get_direction(widget) == GTK_TEXT_DIR_RTL;
+        auto slot = [&](int x)
+        { return grid_position_at(grid, rtl ? width - x - 1 : x, row * height + 1); };
+        g_assert_cmpuint(slot(boundary - 1), ==, row * columns);
+        g_assert_cmpuint(slot(boundary), ==, row * columns + 1);
+        g_assert_cmpuint(slot(width - 1), ==, (row + 1) * columns - 1);
+        return height;
+    };
+    auto *menu = gtk_widget_get_last_child(GTK_WIDGET(overlay));
+    int normal = check(8, 15);
+    g_assert_true(gtk_widget_activate_action(menu, "desktop.grid-density", "s", "compact"));
+    int compact = check(10, 17);
+    g_assert_cmpint(compact, <, normal);
+    g_assert_true(gtk_widget_activate_action(menu, "desktop.grid-density", "s", "spacious"));
+    g_assert_cmpint(check(7, 0), >, normal);
+    undo_latest(G_APPLICATION(desktop.app.get()), grid);
+    g_assert_cmpint(check(10, 17), ==, compact);
+    gtk_widget_set_direction(widget, GTK_TEXT_DIR_RTL);
+    g_settings_set_int(desktop.settings.get(), "icon-size", 24);
+    check(11, 18);
+    g_settings_set_int(desktop.settings.get(), "icon-size", 128);
+    check(4, 0);
+    g_assert_cmpuint(gtk_grid_view_get_min_columns(narrow), ==, 1);
+    g_assert_cmpuint(grid_position_at(grid, -1, 0), ==, GTK_INVALID_LIST_POSITION);
+    g_assert_cmpuint(grid_position_at(grid, width, 0), ==, GTK_INVALID_LIST_POSITION);
+    g_assert_cmpuint(grid_position_at(grid, 0, gtk_widget_get_height(widget)), ==, GTK_INVALID_LIST_POSITION);
+
+    for (int i = 0; i < 17; ++i)
+        std::ofstream{desktop.root / std::to_string(i)};
+    auto *slots = G_LIST_MODEL(gtk_grid_view_get_model(grid));
+    wait_for([&]
+             { return g_list_model_get_n_items(slots) == 18; });
+    auto *scroll = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(grid));
+    gtk_grid_view_scroll_to(grid, 17, GTK_LIST_SCROLL_NONE, nullptr);
+    wait_for([&]
+             { return gtk_adjustment_get_value(scroll) > 0 &&
+                      grid_position_at(grid, width - 1, gtk_widget_get_height(widget) - 1) == 16; });
+    g_assert_cmpuint(grid_position_at(grid, 0, gtk_widget_get_height(widget) - 1), ==, 19);
+    gtk_window_set_child(desktop.window, nullptr);
+}
+
 static void inline_replacement()
 {
     Desktop d;
@@ -210,7 +379,6 @@ static void inline_replacement()
     std::ofstream(d.root / "note") << "replacement";
     g_signal_emit_by_name(entry, "activate");
 
-    // The worker retains the grid until its completion callback runs.
     gpointer live = grid;
     g_object_add_weak_pointer(G_OBJECT(grid), &live);
     gtk_window_set_child(d.window, nullptr);
@@ -233,8 +401,11 @@ int main(int argc, char **argv)
     g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/dev/null", true);
     gtk_init();
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
+    install_desktop_style(gdk_display_get_default());
     g_test_add_func("/file-actions/undo-copied-folders", undo_copied_folders);
     g_test_add_func("/file-actions/queued-trash", queued_trash);
     g_test_add_func("/file-actions/inline-replacement", inline_replacement);
+    g_test_add_func("/file-actions/metadata-refresh", metadata_refresh);
+    g_test_add_func("/file-actions/grid-density", grid_density);
     return g_test_run();
 }
