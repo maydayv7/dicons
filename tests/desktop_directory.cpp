@@ -129,6 +129,61 @@ static void settings_without_dconf()
     g_assert_cmpstr(field, ==, "size");
 }
 
+static void first_managed_keyfile()
+{
+    if (!g_test_subprocess())
+    {
+        g_test_trap_subprocess(nullptr, 5 * G_TIME_SPAN_SECOND, G_TEST_SUBPROCESS_DEFAULT);
+        g_test_trap_assert_passed();
+        return;
+    }
+    g_setenv("GSETTINGS_BACKEND", "keyfile", true);
+    ObjectPtr<GSettingsBackend> backend{g_settings_backend_get_default()};
+    auto previous = desktop_preferences(backend.get());
+    g_settings_set_int(previous.get(), "icon-size", 32);
+    g_settings_set_boolean(previous.get(), "folders-first", false);
+    g_autoptr(GVariant) positions = g_variant_parse(G_VARIANT_TYPE("a{s(uu)}"), "{'file:///folder': (3, 2)}", nullptr, nullptr, nullptr);
+    g_settings_set_value(previous.get(), "icon-positions", positions);
+    g_settings_sync();
+
+    const auto dir = fs::path(g_get_user_config_dir()) / "dicons";
+    fs::create_directories(dir);
+    const auto manifest = dir / "keyfile-settings.gv";
+    std::ofstream(manifest) << "@a{sv} [@{sv} {'icon-size', @v <96>}, @{sv} {'directory', @v <'/A ; B=C'>}]";
+    auto settings = desktop_preferences();
+    g_assert_cmpint(g_settings_get_int(settings.get(), "icon-size"), ==, 96);
+    g_assert_false(g_settings_get_boolean(settings.get(), "folders-first"));
+    g_autofree char *directory = g_settings_get_string(settings.get(), "directory");
+    g_assert_cmpstr(directory, ==, "/A ; B=C");
+    g_autoptr(GVariant) saved = g_settings_get_value(settings.get(), "icon-positions");
+    g_assert_true(g_variant_equal(saved, positions));
+    g_assert_true(g_settings_set_int(settings.get(), "icon-size", 80));
+    g_settings_sync();
+    settings = desktop_preferences();
+    g_assert_cmpint(g_settings_get_int(settings.get(), "icon-size"), ==, 80);
+    settings.reset();
+
+    for (const auto &[content, warning] : {std::pair{"{'icon-size': <96>", "*Cannot read*"},
+                                           std::pair{"{'icon-size': <64>, 'show-trash': <'false'>}", "*Cannot apply 'show-trash'*"},
+                                           std::pair{"{'icon-size': <129>}", "*Cannot apply 'icon-size'*"},
+                                           std::pair{"{'icon-size': <64>, 'unknown': <true>}", "*Unknown or duplicate*"}})
+    {
+        std::ofstream(manifest) << content;
+        g_test_expect_message(nullptr, G_LOG_LEVEL_WARNING, warning);
+        settings = desktop_preferences();
+        g_test_assert_expected_messages();
+        g_assert_cmpint(g_settings_get_int(settings.get(), "icon-size"), ==, 80);
+        g_assert_true(g_settings_get_boolean(settings.get(), "show-trash"));
+        settings.reset();
+    }
+    fs::remove(manifest);
+    settings = desktop_preferences();
+    g_assert_cmpint(g_settings_get_int(settings.get(), "icon-size"), ==, 48);
+    g_assert_false(g_settings_get_boolean(settings.get(), "folders-first"));
+    g_autoptr(GVariant) remaining = g_settings_get_value(settings.get(), "icon-positions");
+    g_assert_true(g_variant_equal(remaining, positions));
+}
+
 static guint position_of(GListModel *model, std::string_view name)
 {
     for (guint i = 0; i < g_list_model_get_n_items(model); ++i)
@@ -153,6 +208,57 @@ static bool wait_for(auto predicate)
         std::this_thread::sleep_for(2ms);
     } while (std::chrono::steady_clock::now() < deadline);
     return false;
+}
+
+static void live_keyfile_declarations()
+{
+    if (!g_test_subprocess())
+    {
+        g_test_trap_subprocess(nullptr, 20 * G_TIME_SPAN_SECOND, G_TEST_SUBPROCESS_DEFAULT);
+        g_test_trap_assert_passed();
+        return;
+    }
+    g_setenv("GSETTINGS_BACKEND", "keyfile", true);
+    auto settings = desktop_preferences();
+    DesktopSort sort(settings.get());
+    const auto dir = fs::path(g_get_user_config_dir()) / "dicons";
+    const auto manifest = dir / "keyfile-settings.gv";
+    std::ofstream(dir / "one") << "{'icon-size': <64>, 'sort-field': <'size'>}";
+    std::ofstream(dir / "two") << "{'icon-size': <64>, 'folders-first': <false>}";
+    auto activate = [&](const char *generation)
+    {
+        fs::create_symlink(generation, dir / "new-link");
+        fs::rename(dir / "new-link", manifest);
+    };
+    const char *uri = "file:///moved";
+    activate("one");
+    g_assert_true(write_positions(settings.get(), {{uri, {2, 1}}}));
+    g_assert_true(wait_for([&]
+                           { return g_settings_get_int(settings.get(), "icon-size") == 64; }));
+    g_assert_cmpuint(read_positions(settings.get()).at(uri).column, ==, 2);
+    g_assert_true(write_positions(settings.get(), {{uri, {3, 2}}}));
+    g_autoptr(GKeyFile) saved = g_key_file_new();
+    g_assert_true(g_key_file_load_from_file(saved, (dir / "settings.ini").c_str(), G_KEY_FILE_NONE, nullptr));
+    g_assert_cmpint(g_key_file_get_integer(saved, "desktop", "icon-size", nullptr), ==, 64);
+    g_settings_set_int(settings.get(), "icon-size", 80);
+    activate("two");
+    g_assert_true(wait_for([&]
+                           { return !g_settings_get_boolean(settings.get(), "folders-first"); }));
+    g_assert_cmpint(g_settings_get_int(settings.get(), "icon-size"), ==, 80);
+    g_autofree char *field = g_settings_get_string(settings.get(), "sort-field");
+    g_assert_cmpstr(field, ==, "name");
+    activate("one");
+    g_assert_true(wait_for([&]
+                           { return g_settings_get_boolean(settings.get(), "folders-first"); }));
+    fs::remove(manifest);
+    g_assert_true(wait_for([&]
+                           { return g_settings_get_int(settings.get(), "icon-size") == 48; }));
+    g_assert_cmpuint(read_positions(settings.get()).at(uri).column, ==, 3);
+    activate("one");
+    g_assert_true(wait_for([&]
+                           { return g_settings_get_int(settings.get(), "icon-size") == 64; }));
+    g_action_group_activate_action(G_ACTION_GROUP(sort.actions.get()), "field", g_variant_new_string("size"));
+    g_assert_true(read_positions(settings.get()).empty());
 }
 
 static bool checked(GAction *action)
@@ -616,6 +722,8 @@ int main(int argc, char **argv)
     g_test_add_func("/directory/desktop-folder-setting", desktop_folder_setting);
     g_test_add_func("/directory/invalid-desktop-folder", invalid_desktop_folder);
     g_test_add_func("/directory/settings-without-dconf", settings_without_dconf);
+    g_test_add_func("/directory/first-managed-keyfile", first_managed_keyfile);
+    g_test_add_func("/directory/live-keyfile-declarations", live_keyfile_declarations);
     g_test_add_func("/directory/manual-layout", manual_layout);
     g_test_add_func("/directory/pinned-trash", pinned_trash);
     g_test_add_func("/directory/atomic-saves", atomic_saves);

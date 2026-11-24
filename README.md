@@ -83,7 +83,7 @@ cmake --install build
 This repo includes a [Home Manager](https://github.com/nix-community/home-manager) module. On NixOS, add this to your configuration:
 
 ```nix
-programs.dconf.enable = true;
+programs.dconf.enable = true; # Optional
 home-manager.sharedModules = [ inputs.dicons.homeManagerModules.default ];
 home-manager.users.<name>.services.dicons = {
   enable = true;

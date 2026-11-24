@@ -1,5 +1,6 @@
 #include "desktop_sort.hpp"
 #include "desktop_item.hpp"
+#include "preferences.hpp"
 
 #include <compare>
 #include <string_view>
@@ -87,7 +88,7 @@ static int compare_items(gconstpointer left, gconstpointer right, gpointer data)
 
 static void sort_changed(GSettings *preferences, const char *key, GtkCustomSorter *sorter)
 {
-    if (key)
+    if (key && !applying_keyfile_declarations(preferences))
         g_settings_reset(preferences, "icon-positions");
     g_autofree char *field = g_settings_get_string(preferences, "sort-field");
     g_autofree char *direction = g_settings_get_string(preferences, "sort-direction");

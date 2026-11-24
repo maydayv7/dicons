@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
   <schema id="dev.maydayv7.dicons" path="/dev/maydayv7/dicons/">
+    <child name="keyfile" schema="dev.maydayv7.dicons.keyfile" />
     <key name="directory" type="s">
       <default>''</default>
       <summary>Directory shown on the desktop</summary>
@@ -44,6 +45,12 @@
     <key name="folders-first" type="b">
       <default>true</default>
       <summary>Sort folders before files</summary>
+    </key>
+  </schema>
+  <schema id="dev.maydayv7.dicons.keyfile">
+    <key name="declarations" type="a{sv}">
+      <default>{}</default>
+      <summary>Last declarations applied to the writable keyfile</summary>
     </key>
   </schema>
 </schemalist>

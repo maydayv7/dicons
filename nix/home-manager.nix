@@ -1,10 +1,11 @@
-self: {
+self: args @ {
   config,
   lib,
   pkgs,
   ...
 }: let
   cfg = config.services.dicons;
+  useDconf = config.dconf.enable && (args.osConfig.programs.dconf.enable or true);
   target = config.wayland.systemd.target;
   unit = "${(pkgs.replaceVarsWith {
     src = ../data/dicons.service.in;
@@ -41,10 +42,19 @@ in {
   config = lib.mkIf cfg.enable {
     assertions = [(lib.hm.assertions.assertPlatform "services.dicons" pkgs lib.platforms.linux)];
     home.packages = [cfg.package];
-    dconf.settings."dev/maydayv7/dicons" = lib.mkIf (cfg.settings != {}) cfg.settings;
+    dconf.settings."dev/maydayv7/dicons" = lib.mkIf (useDconf && cfg.settings != {}) cfg.settings;
     xdg.configFile = {
       "systemd/user/dicons.service".source = unit;
       "systemd/user/${target}.wants/dicons.service".source = unit;
+
+      "dicons/keyfile-settings.gv" = lib.mkIf (!useDconf) {
+        text = let
+          inherit (lib.hm.gvariant) mkArray mkDictionaryEntry mkVariant;
+          entries = lib.mapAttrsToList (key: value: mkDictionaryEntry [key (mkVariant value)]) cfg.settings;
+        in
+          toString (mkArray "{sv}" entries);
+      };
+
       "dicons/style.css" = lib.mkIf (cfg.style != null) (
         if builtins.isPath cfg.style || lib.isStorePath cfg.style
         then {source = cfg.style;}
