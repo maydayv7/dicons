@@ -8,10 +8,24 @@
 #include <sys/resource.h>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <sys/stat.h>
 #include <thread>
 
 namespace fs = std::filesystem;
+
+#ifdef __linux__
+static std::function<void(const fs::path &)> after_copy;
+extern "C" decltype(g_file_copy) __real_g_file_copy;
+extern "C" gboolean __wrap_g_file_copy(GFile *source, GFile *dest, GFileCopyFlags flags, GCancellable *cancel,
+                                       GFileProgressCallback progress, gpointer data, GError **error)
+{
+    gboolean copied = __real_g_file_copy(source, dest, flags, cancel, progress, data, error);
+    if (copied && after_copy)
+        after_copy(g_file_peek_path(source));
+    return copied;
+}
+#endif
 
 static ObjectPtr<GFile> file(const fs::path &path)
 {
@@ -340,6 +354,113 @@ static void overlapping_operations()
     g_assert_true(contents(a ? f.folder / "deleting" : deleting) == "trash");
 }
 
+#ifdef __linux__
+static void cross_device_changes(Fixture &f, const fs::path &target)
+{
+    const auto source = f.desktop / "editing";
+    const auto destination = target / "editing";
+    std::ofstream(source) << "original";
+    after_copy = [&](const fs::path &)
+    { std::ofstream(source) << "replacement"; };
+    g_autoptr(GError) error = nullptr;
+    g_assert_nonnull(f.move(source, target, false, &error));
+    g_assert_no_error(error);
+    g_assert_true(contents(source) == "replacement");
+    g_assert_true(contents(destination) == "original");
+    fs::remove(destination);
+
+    const auto alias = f.desktop / "writer";
+    fs::create_hard_link(source, alias);
+    after_copy = [&](const fs::path &)
+    { std::ofstream(alias) << "edited during copy"; };
+    g_assert_null(f.move(source, target, false, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_FAILED);
+    g_clear_error(&error);
+    g_assert_false(fs::exists(destination));
+    g_assert_true(fs::equivalent(source, alias));
+    g_assert_true(contents(source) == "edited during copy");
+
+    fs::path recovery;
+    after_copy = [&](const fs::path &claimed)
+    {
+        recovery = claimed;
+        std::ofstream(source) << "new source";
+        std::ofstream(destination) << "new destination";
+    };
+    g_assert_null(f.move(source, target, false, &error));
+    after_copy = {};
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_FAILED);
+    g_assert_nonnull(g_strstr_len(error->message, -1, recovery.c_str()));
+    g_assert_true(contents(source) == "new source");
+    g_assert_true(contents(destination) == "new destination");
+    g_assert_true(contents(recovery) == "edited during copy");
+    g_assert_true(recovery.filename() == source.filename());
+    g_clear_error(&error);
+
+    after_copy = [&](const fs::path &claimed)
+    {
+        recovery = claimed;
+        std::ofstream(source) << "next source";
+        std::ofstream(target / "editing (1)") << "next destination";
+    };
+    g_assert_null(f.move(source, target, true, &error));
+    after_copy = {};
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_FAILED);
+    g_assert_true(contents(recovery) == "new source");
+    g_assert_true(contents(source) == "next source");
+    g_assert_true(contents(target / "editing (1)") == "next destination");
+    g_assert_false(fs::exists(target / "editing (2)"));
+    g_clear_error(&error);
+
+    const auto stale = identity(source, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS);
+    fs::rename(source, f.desktop / "previous");
+    fs::create_symlink("previous", source);
+    fs::remove(destination);
+    g_assert_null(move_into_folder(file(source).get(), file(target).get(), false, &error, &stale));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_FAILED);
+    g_assert_true(fs::read_symlink(source) == "previous");
+    g_assert_true(contents(f.desktop / "previous") == "next source");
+    g_assert_false(fs::exists(destination));
+    g_clear_error(&error);
+
+    after_copy = [&](const fs::path &)
+    {
+        if (!fs::exists(target / "editing (2)"))
+            std::ofstream(target / "editing (2)") << "taken";
+    };
+    g_assert_nonnull(f.move(source, target, true, &error));
+    after_copy = {};
+    g_assert_no_error(error);
+    g_assert_true(contents(target / "editing (2)") == "taken");
+    g_assert_true(fs::read_symlink(target / "editing (3)") == "previous");
+    g_assert_false(fs::is_symlink(source));
+}
+
+static void interrupted_move(Fixture &f, const fs::path &target)
+{
+    auto source = f.desktop / "interrupted";
+    std::ofstream(source) << "recover me";
+    g_autoptr(GError) error = nullptr;
+    ObjectPtr<GSubprocess> child{g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &error, "/proc/self/exe",
+                                                  "--interrupt-move", source.c_str(), target.c_str(), nullptr)};
+    g_assert_no_error(error);
+    g_assert_true(g_subprocess_wait(child.get(), nullptr, &error));
+    g_assert_no_error(error);
+    g_assert_true(g_subprocess_get_if_signaled(child.get()));
+    g_assert_cmpint(g_subprocess_get_term_sig(child.get()), ==, SIGKILL);
+    g_assert_false(fs::exists(source));
+    g_assert_false(fs::exists(target / source.filename()));
+    size_t recovered = 0;
+    for (const auto &entry : fs::directory_iterator(f.desktop))
+        if (entry.path().filename().string().starts_with(".dicons-move-") && fs::exists(entry.path() / source.filename()))
+        {
+            g_assert_true(contents(entry.path() / source.filename()) == "recover me");
+            ++recovered;
+        }
+    g_assert_cmpuint(recovered, ==, 1);
+}
+#endif
+
 static void cross_filesystem()
 {
     Fixture f;
@@ -415,12 +536,24 @@ static void cross_filesystem()
     g_assert_nonnull(copy);
     g_assert_true(contents(target / "Folder/child") == "child");
     g_assert_true(contents(f.folder / "child") == "child");
+#ifdef __linux__
+    cross_device_changes(f, target);
+    interrupted_move(f, target);
+#endif
     fs::remove_all(target);
 }
 
 int main(int argc, char **argv)
 {
     g_setenv("GIO_USE_VFS", "local", true);
+#ifdef __linux__
+    if (argc == 4 && g_str_equal(argv[1], "--interrupt-move"))
+    {
+        after_copy = [](const fs::path &)
+        { raise(SIGKILL); };
+        return move_into_folder(file(argv[2]).get(), file(argv[3]).get(), false, nullptr) ? 0 : 1;
+    }
+#endif
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
     g_test_add_func("/folder-drop/drag-formats", drag_formats);
     g_test_add_func("/folder-drop/types-and-conflicts", kinds_and_conflicts);

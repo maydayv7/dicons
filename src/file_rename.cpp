@@ -6,7 +6,6 @@
 #include <filesystem>
 #include <format>
 #include <string_view>
-#include <mutex>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -37,14 +36,14 @@ DropIdentity file_identity(GFile *file, GFileQueryInfoFlags flags)
     return DropIdentity(info.get());
 }
 
-bool matches_drag_source(const DragIdentities &identities, GFile *source, GError **error)
+const DropIdentity *verify_drag_source(const DragIdentities &identities, GFile *source, GError **error)
 {
     g_autofree char *uri = g_file_get_uri(source);
     auto found = identities.find(uri);
     if (found != identities.end())
-        return found->second.matches(source, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, error);
+        return found->second.matches(source, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, error) ? &found->second : nullptr;
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "The drag selection changed.");
-    return false;
+    return nullptr;
 }
 
 static bool errno_error(int code, GError **error)
@@ -60,7 +59,52 @@ static bool same_version(const struct stat &a, const struct stat &b)
            a.st_ctim.tv_sec == b.st_ctim.tv_sec && a.st_ctim.tv_nsec == b.st_ctim.tv_nsec;
 }
 
-static bool move_across_devices(GFile *source, GFile *destination, GError **error)
+struct MoveStage
+{
+    std::string directory;
+    ObjectPtr<GFile> item;
+
+    bool create(GFile *entry, const char *pattern, GError **error)
+    {
+        ObjectPtr<GFile> parent{g_file_get_parent(entry)};
+        g_autofree char *path = g_build_filename(g_file_peek_path(parent.get()), pattern, nullptr);
+        if (!g_mkdtemp_full(path, 0700))
+            return errno_error(errno, error);
+        directory = path;
+        g_autofree char *name = g_file_get_basename(entry);
+        item.reset(g_file_new_build_filename(path, name, nullptr));
+        return true;
+    }
+
+    ~MoveStage()
+    {
+        if (!directory.empty())
+            rmdir(directory.c_str());
+    }
+};
+
+static bool copy_claimed_file(GFile *claimed, const DropIdentity &expected, GFile *staged, GFile *destination, GError **error)
+{
+    if (!expected.matches(claimed, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, error))
+        return false;
+    const char *path = g_file_peek_path(claimed);
+    struct stat before{}, after{};
+    if (lstat(path, &before) < 0)
+        return errno_error(errno, error);
+    const auto flags = GFileCopyFlags(G_FILE_COPY_NOFOLLOW_SYMLINKS | G_FILE_COPY_ALL_METADATA);
+    if (!g_file_copy(claimed, staged, flags, nullptr, nullptr, nullptr, error))
+        return false;
+    if (lstat(path, &after) < 0)
+        return errno_error(errno, error);
+    if (!same_version(before, after))
+    {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "The source changed while it was being copied.");
+        return false;
+    }
+    return rename_no_replace(staged, destination, error);
+}
+
+static bool move_across_devices(GFile *source, GFile *destination, const DropIdentity &expected, GError **error)
 {
     const char *from = g_file_peek_path(source);
     const char *to = g_file_peek_path(destination);
@@ -76,41 +120,31 @@ static bool move_across_devices(GFile *source, GFile *destination, GError **erro
         return errno_error(EEXIST, error);
     if (errno != ENOENT)
         return errno_error(errno, error);
-    ObjectPtr<GFile> folder{g_file_get_parent(destination)};
-    g_autofree char *stage = g_build_filename(g_file_peek_path(folder.get()), ".dicons-XXXXXX", nullptr);
-    if (!g_mkdtemp_full(stage, 0700))
-        return errno_error(errno, error);
-    ObjectPtr<GFile> staged{g_file_new_build_filename(stage, "item", nullptr)};
-    const auto flags = GFileCopyFlags(G_FILE_COPY_NOFOLLOW_SYMLINKS | G_FILE_COPY_ALL_METADATA);
-    bool moved = false;
-    if (g_file_copy(source, staged.get(), flags, nullptr, nullptr, nullptr, error))
+    MoveStage copy, claim;
+    if (!copy.create(destination, ".dicons-XXXXXX", error) || !claim.create(source, ".dicons-move-XXXXXX", error) ||
+        !rename_no_replace(source, claim.item.get(), error))
+        return false;
+
+    g_autoptr(GError) failure = nullptr;
+    if (copy_claimed_file(claim.item.get(), expected, copy.item.get(), destination, &failure))
     {
-        static std::mutex commit;
-        const std::lock_guard lock(commit);
-        if (lstat(from, &current) < 0)
-            errno_error(errno, error);
-        else if (!same_version(original, current))
-            g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "The source changed while it was being copied.");
-        else if (rename_no_replace(staged.get(), destination, error))
-        {
-            struct stat published{};
-            bool observed = lstat(to, &published) == 0;
-            if (unlink(from) == 0)
-                moved = true;
-            else
-            {
-                errno_error(errno, error);
-                if (observed && lstat(to, &current) == 0 && same_version(published, current))
-                    unlink(to);
-            }
-        }
+        if (unlink(g_file_peek_path(claim.item.get())) == 0)
+            return true;
+        g_set_error(&failure, G_IO_ERROR, G_IO_ERROR_FAILED, "Copied to %s, but could not remove the source: %s", to, g_strerror(errno));
     }
-    unlink(g_file_peek_path(staged.get()));
-    rmdir(stage);
-    return moved;
+    else
+        unlink(g_file_peek_path(copy.item.get()));
+
+    g_autoptr(GError) restore_error = nullptr;
+    if (rename_no_replace(claim.item.get(), source, &restore_error))
+        g_propagate_error(error, g_steal_pointer(&failure));
+    else
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "%s\nCould not restore %s: %s\nRecover the item from %s.",
+                    failure->message, from, restore_error->message, g_file_peek_path(claim.item.get()));
+    return false;
 }
 
-bool rename_no_replace(GFile *source, GFile *destination, GError **error, bool allow_file_copy)
+bool rename_no_replace(GFile *source, GFile *destination, GError **error, const DropIdentity *move_identity)
 {
     if (!g_file_is_native(source) || !g_file_is_native(destination))
     {
@@ -122,8 +156,8 @@ bool rename_no_replace(GFile *source, GFile *destination, GError **error, bool a
                   g_file_peek_path(destination), RENAME_NOREPLACE) == 0)
         return true;
     int code = errno;
-    if (code == EXDEV && allow_file_copy)
-        return move_across_devices(source, destination, error);
+    if (code == EXDEV && move_identity)
+        return move_across_devices(source, destination, *move_identity, error);
     return errno_error(code, error);
 #else
     return g_file_move(source, destination, GFileCopyFlags(G_FILE_COPY_NO_FALLBACK_FOR_MOVE | G_FILE_COPY_NOFOLLOW_SYMLINKS),
@@ -131,12 +165,12 @@ bool rename_no_replace(GFile *source, GFile *destination, GError **error, bool a
 #endif
 }
 
-ObjectPtr<GFile> rename_into_folder(GFile *source, GFile *folder, const char *name, bool keep_both, GError **error, bool allow_file_copy)
+ObjectPtr<GFile> rename_into_folder(GFile *source, GFile *folder, const char *name, bool keep_both, GError **error, const DropIdentity *move_identity)
 {
     if (!keep_both)
     {
         ObjectPtr<GFile> destination{g_file_get_child(folder, name)};
-        if (rename_no_replace(source, destination.get(), error, allow_file_copy))
+        if (rename_no_replace(source, destination.get(), error, move_identity))
             return destination;
         return nullptr;
     }
@@ -166,7 +200,7 @@ ObjectPtr<GFile> rename_into_folder(GFile *source, GFile *folder, const char *na
         auto alternative = std::format("{}{}{}", prefix, suffix, ext);
         ObjectPtr<GFile> destination{g_file_get_child(folder, alternative.c_str())};
         g_autoptr(GError) attempt = nullptr;
-        if (rename_no_replace(source, destination.get(), &attempt, allow_file_copy))
+        if (rename_no_replace(source, destination.get(), &attempt, move_identity))
             return destination;
         if (!g_error_matches(attempt, G_IO_ERROR, G_IO_ERROR_EXISTS))
         {
@@ -176,7 +210,7 @@ ObjectPtr<GFile> rename_into_folder(GFile *source, GFile *folder, const char *na
     }
 }
 
-ObjectPtr<GFile> move_into_folder(GFile *source, GFile *folder, bool keep_both, GError **error)
+ObjectPtr<GFile> move_into_folder(GFile *source, GFile *folder, bool keep_both, GError **error, const DropIdentity *expected)
 {
     if (!g_file_is_native(source) || !g_file_is_native(folder))
     {
@@ -194,7 +228,8 @@ ObjectPtr<GFile> move_into_folder(GFile *source, GFile *folder, bool keep_both, 
     if (parent && std::filesystem::equivalent(g_file_peek_path(parent.get()), g_file_peek_path(folder), ec))
         return retain(source);
     g_autofree char *name = g_file_get_basename(source);
-    return rename_into_folder(source, folder, name, keep_both, error, true);
+    const auto identity = expected ? *expected : file_identity(source);
+    return rename_into_folder(source, folder, name, keep_both, error, &identity);
 }
 
 ObjectPtr<GFile> rename_desktop_item(GFile *source, const char *name, GError **error)

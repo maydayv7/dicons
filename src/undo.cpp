@@ -181,7 +181,7 @@ static void undo_files(GTask *task, gpointer, gpointer data, GCancellable *)
             {
                 ObjectPtr<GFile> parent{g_file_get_parent(change.original.get())};
                 if (change.parent.matches(parent.get(), G_FILE_QUERY_INFO_NONE, &raw) &&
-                    rename_no_replace(file, change.original.get(), &raw, true))
+                    rename_no_replace(file, change.original.get(), &raw, &change.item))
                 {
                     done = true;
                     restored = retain(change.original.get());

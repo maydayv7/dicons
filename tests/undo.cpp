@@ -294,7 +294,7 @@ static void cross_device_history()
     finish_undo_step(f.app.get(), create);
     auto move = begin_undo_step(f.app.get());
     auto id = file_identity(source.get());
-    g_assert_true(rename_no_replace(source.get(), dest.get(), nullptr, true));
+    g_assert_true(rename_no_replace(source.get(), dest.get(), nullptr, &id));
     remember_file(move, dest.get(), source.get(), id);
     finish_undo_step(f.app.get(), move);
     undo_latest(f.app.get());

@@ -59,8 +59,9 @@ static void transfer_worker(GTask *task, gpointer, gpointer data, GCancellable *
         }
         transfer->source_identities = std::move(identities);
     }
-    if ((transfer->folder && !transfer->target_identity.matches(transfer->folder.get(), G_FILE_QUERY_INFO_NONE, &error)) ||
-        (transfer->source_identities && !matches_drag_source(*transfer->source_identities, source, &error)))
+    const auto *identity = transfer->source_identities ? verify_drag_source(*transfer->source_identities, source, &error) : nullptr;
+    if ((transfer->source_identities && !identity) ||
+        (transfer->folder && !transfer->target_identity.matches(transfer->folder.get(), G_FILE_QUERY_INFO_NONE, &error)))
     {
         g_task_return_error(task, g_steal_pointer(&error));
         return;
@@ -68,17 +69,14 @@ static void transfer_worker(GTask *task, gpointer, gpointer data, GCancellable *
     auto *target = transfer->folder ? transfer->folder.get() : transfer->site.desktop.get();
     if (transfer->paste_finished && !transfer->move && g_file_has_parent(source, target))
         transfer->keep_both = true;
-    auto destination = transfer->move ? move_into_folder(source, target, transfer->keep_both, &error)
+    auto destination = transfer->move ? move_into_folder(source, target, transfer->keep_both, &error, identity)
                                       : desktop_copy_item(source, target, transfer->stage.get(), transfer->keep_both, &error);
     if (destination)
     {
         if (transfer->move && g_file_equal(destination.get(), source))
             transfer->complete = false;
         else if (transfer->move)
-        {
-            g_autofree char *uri = g_file_get_uri(source);
-            remember_file(transfer->undo, destination.get(), source, transfer->source_identities->at(uri));
-        }
+            remember_file(transfer->undo, destination.get(), source, *identity);
         else
             remember_file(transfer->undo, destination.get());
         g_task_return_pointer(task, destination.release(), g_object_unref);
@@ -158,7 +156,7 @@ static void next_item(Transfer *transfer)
         std::vector<GFile *> remaining;
         for (const auto &file : transfer->remaining)
             remaining.push_back(file.get());
-        transfer->paste_finished(remaining);
+        transfer->paste_finished(remaining, std::move(transfer->source_identities));
     }
     delete transfer;
 }

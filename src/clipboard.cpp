@@ -14,6 +14,7 @@ namespace
     constexpr const char *uris = "text/uri-list";
     constexpr const char *gnome = "x-special/gnome-copied-files";
     constexpr const char *kde = "application/x-kde-cutselection";
+    using CutIdentities = std::shared_ptr<const DragIdentities>;
 
     GdkContentProvider *bytes_provider(const char *mime, const std::string &text)
     {
@@ -22,14 +23,29 @@ namespace
     }
 
     void offer(GdkClipboard *clipboard, const std::vector<GFile *> &files, bool cut,
-               std::shared_ptr<const DragIdentities> identities)
+               CutIdentities identities)
     {
         g_autoptr(GdkContentProvider) content = file_clipboard_content(files, cut);
         if (identities)
-            g_object_set_data_full(G_OBJECT(content), "cut-identities", new std::shared_ptr<const DragIdentities>(std::move(identities)),
+            g_object_set_data_full(G_OBJECT(content), "cut-identities", new CutIdentities(std::move(identities)),
                                    [](gpointer p)
-                                   { delete static_cast<std::shared_ptr<const DragIdentities> *>(p); });
+                                   { delete static_cast<CutIdentities *>(p); });
         gdk_clipboard_set_content(clipboard, content);
+    }
+
+    CutIdentities &foreign_cut(GdkClipboard *clipboard)
+    {
+        auto *ids = static_cast<CutIdentities *>(g_object_get_data(G_OBJECT(clipboard), "foreign-cut-identities"));
+        if (!ids)
+        {
+            ids = new CutIdentities;
+            g_object_set_data_full(G_OBJECT(clipboard), "foreign-cut-identities", ids, [](gpointer p)
+                                   { delete static_cast<CutIdentities *>(p); });
+            g_signal_connect(clipboard, "changed", G_CALLBACK(+[](GdkClipboard *, CutIdentities *cached)
+                                                              { cached->reset(); }),
+                             ids);
+        }
+        return *ids;
     }
 
     struct Paste
@@ -38,7 +54,7 @@ namespace
         ObjectPtr<GdkClipboard> clipboard;
         ObjectPtr<GFile> folder;
         DropIdentity target;
-        std::shared_ptr<const DragIdentities> identities;
+        CutIdentities identities;
         ObjectPtr<GCancellable> reading{g_cancellable_new()};
         bool changed{}, cut{};
         const char *mime{};
@@ -72,14 +88,19 @@ namespace
         if (!paste->cut)
             paste->release_slot();
         transfer_pasted_files(paste->grid.get(), paste->folder.get(), paste->target, files, paste->cut, paste->identities,
-                              [paste, count = files.size()](const std::vector<GFile *> &remaining)
+                              [paste, count = files.size()](const std::vector<GFile *> &remaining, CutIdentities identities)
                               {
-                                  if (!paste->cut || paste->changed || remaining.size() == count)
+                                  if (!paste->cut || paste->changed)
                                       return;
-                                  if (remaining.empty())
+                                  if (remaining.size() == count)
+                                  {
+                                      if (!paste->identities)
+                                          foreign_cut(paste->clipboard.get()) = std::move(identities);
+                                  }
+                                  else if (remaining.empty())
                                       gdk_clipboard_set_content(paste->clipboard.get(), nullptr);
                                   else
-                                      offer(paste->clipboard.get(), remaining, true, paste->identities);
+                                      offer(paste->clipboard.get(), remaining, true, std::move(identities));
                               });
     }
 
@@ -277,8 +298,10 @@ void paste_selection(GtkGridView *grid, bool into_folder)
     }
     auto *paste = new Paste{retain(grid), retain(clipboard), std::move(folder), std::move(target)};
     if (auto *content = gdk_clipboard_get_content(clipboard))
-        if (auto *ids = static_cast<std::shared_ptr<const DragIdentities> *>(g_object_get_data(G_OBJECT(content), "cut-identities")))
+        if (auto *ids = static_cast<CutIdentities *>(g_object_get_data(G_OBJECT(content), "cut-identities")))
             paste->identities = *ids;
+    if (!paste->identities)
+        paste->identities = foreign_cut(clipboard);
     g_object_set_data(G_OBJECT(clipboard), "dicons-paste", paste);
     g_signal_connect(clipboard, "changed", G_CALLBACK(+[](GdkClipboard *, Paste *p)
                                                       { p->changed = true; g_cancellable_cancel(p->reading.get()); p->release_slot(); }),

@@ -57,7 +57,7 @@ namespace
         {
             TrashedFile entry;
             g_autoptr(GError) error = nullptr;
-            if ((request.identities && !matches_drag_source(*request.identities, file.get(), &error)) ||
+            if ((request.identities && !verify_drag_source(*request.identities, file.get(), &error)) ||
                 !move_to_trash(file.get(), entry, &error))
                 record_error(request, "Could not move item to Trash", file.get(), error->message);
             else

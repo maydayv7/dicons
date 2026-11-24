@@ -7,6 +7,6 @@
 
 void transfer_attach(GtkWindow *window, GtkGridView *grid, GFile *desktop, GHashTable *staging);
 
-using PasteFinished = std::function<void(const std::vector<GFile *> &remaining)>;
+using PasteFinished = std::function<void(const std::vector<GFile *> &remaining, std::shared_ptr<const DragIdentities> identities)>;
 void transfer_pasted_files(GtkGridView *grid, GFile *folder, const DropIdentity &target, const std::vector<GFile *> &files,
                            bool move, std::shared_ptr<const DragIdentities> identities, PasteFinished finished);
