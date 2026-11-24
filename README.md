@@ -77,6 +77,13 @@ Download the package for your distribution from the [Releases](https://github.co
 | Fedora 44    | `sudo dnf install ./dicons-*.rpm`       |
 | Arch Linux   | `sudo pacman -U ./dicons-*.pkg.tar.zst` |
 
+An AppImage is also included:
+
+```sh
+chmod +x ./dicons-*.AppImage
+./dicons-*.AppImage
+```
+
 To build the development version on Arch, install `base-devel` and `git`, clone this repo, and run `makepkg -si` from `packaging/arch/`.
 
 #### Build from source

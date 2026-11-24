@@ -86,6 +86,11 @@ add_custom_command(
 )
 add_executable(dicons src/main.cpp dicons-resources.c)
 target_link_libraries(dicons PRIVATE dicons-core)
+option(DICONS_APPIMAGE "Use bundled GTK resources" OFF)
+if(DICONS_APPIMAGE)
+    target_sources(dicons PRIVATE packaging/appimage/runtime.cpp)
+    target_compile_definitions(dicons PRIVATE DICONS_APPIMAGE)
+endif()
 
 include(CTest)
 if(BUILD_TESTING)

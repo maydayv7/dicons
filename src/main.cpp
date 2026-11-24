@@ -74,8 +74,15 @@ namespace
     };
 }
 
+#ifdef DICONS_APPIMAGE
+void init_appimage();
+#endif
+
 int main(int argc, char **argv)
 {
+#ifdef DICONS_APPIMAGE
+    init_appimage();
+#endif
     g_set_prgname(desktop_app_id);
     return DesktopApplication{}.run(argc, argv);
 }
