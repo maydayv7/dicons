@@ -28,6 +28,16 @@ void notify_item_updated(DiconsItemUpdates *updates, GFileInfo *info)
     g_signal_emit(updates, item_updated, 0, info);
 }
 
+bool folder_accepts_files(GFileInfo *info)
+{
+    if (g_file_info_get_file_type(info) != G_FILE_TYPE_DIRECTORY)
+        return false;
+    for (auto key : {G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE, G_FILE_ATTRIBUTE_ACCESS_CAN_EXECUTE})
+        if (g_file_info_has_attribute(info, key) && !g_file_info_get_attribute_boolean(info, key))
+            return false;
+    return true;
+}
+
 bool has_launcher_name(GFileInfo *info)
 {
     return std::string_view{g_file_info_get_name(info)}.ends_with(".desktop");

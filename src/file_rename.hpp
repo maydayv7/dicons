@@ -20,6 +20,7 @@ struct DropIdentity
 };
 
 DropIdentity file_identity(GFile *file, GFileQueryInfoFlags flags = G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS);
+DropIdentity cached_identity(GFileInfo *info);
 DropIdentity listed_identity(GFileInfo *info, GFile *file);
 void cache_link_identity(GFileInfo *info, GFile *file);
 

@@ -1,6 +1,7 @@
 #include "undo.hpp"
 #include "transfer.hpp"
 #include "grid_selection.hpp"
+#include "grid_layout.hpp"
 #include "icon_grid.hpp"
 #include "trash_actions.hpp"
 #include "copy.hpp"
@@ -8,10 +9,12 @@
 #include "copy_stage.hpp"
 #include "collision_dialog.hpp"
 #include "desktop_directory.hpp"
+#include "symlink.hpp"
 #include "notifications.hpp"
 
 #include <deque>
 #include <memory>
+#include <optional>
 
 namespace
 {
@@ -39,6 +42,7 @@ namespace
         bool keep_both{};
         bool copied{};
         bool to_trash{};
+        std::optional<GridCell> drop_cell;
         PasteFinished paste_finished;
         std::vector<ObjectPtr<GFile>> remaining;
     };
@@ -103,6 +107,8 @@ static void transfer_finished(GObject *, GAsyncResult *result, gpointer data)
     g_autoptr(GFile) destination = static_cast<GFile *>(g_task_propagate_pointer(G_TASK(result), &error));
     if (destination && !transfer->folder && gtk_widget_get_root(GTK_WIDGET(transfer->grid.get())))
     {
+        if (transfer->drop_cell && !g_file_equal(destination, transfer->files.front().get()))
+            grid_layout(transfer->grid.get()).place_drop(destination, *transfer->drop_cell);
         GtkSelectionModel *selection = gtk_grid_view_get_model(transfer->grid.get());
         if (!transfer->copied)
             gtk_selection_model_unselect_all(selection);
@@ -278,57 +284,104 @@ static GFileInfo *drop_item(GtkDropTargetAsync *target, double x, double y, GtkG
     return info;
 }
 
-static GdkDragAction drop_action(GtkDropTargetAsync *target, GdkDrop *drop, double x, double y, GtkGridView *grid)
+struct DropTarget
+{
+    GdkDragAction action;
+    GFileInfo *recipient;
+};
+
+static DropTarget resolve_drop(GtkDropTargetAsync *target, GdkDrop *drop, double x, double y, GtkGridView *grid)
 {
     auto *info = drop_item(target, x, y, grid);
     auto offered = gdk_drop_get_actions(drop);
-    if (drag_origin(drop))
-        return GdkDragAction(offered & GDK_ACTION_COPY);
-    if (info && is_trash_icon(info))
-        return GdkDragAction(offered & GDK_ACTION_MOVE);
-    return (offered & GDK_ACTION_COPY) ? GDK_ACTION_COPY : GdkDragAction(offered & GDK_ACTION_MOVE);
+    auto identities = drag_identities(drop);
+    bool trash = info && is_trash_icon(info);
+    auto preferred = GDK_ACTION_COPY;
+    if (!identities && (trash || !(offered & GDK_ACTION_COPY)))
+        preferred = GDK_ACTION_MOVE;
+    auto action = GdkDragAction(offered & preferred);
+    if (!action || !info || dragging_trash(drop))
+        return {action, nullptr};
+    if (trash)
+        return {action, info};
+    if (g_file_info_get_file_type(info) != G_FILE_TYPE_DIRECTORY)
+        return {action, nullptr};
+    if (identities)
+    {
+        g_autofree char *uri = g_file_get_uri(item_file(info));
+        if (identities->contains(uri))
+            return {action, nullptr};
+        // A directory shortcut can lead back into a folder in the drag, or to desktop itself
+        if (auto *path = symlink_target_path(info))
+        {
+            ObjectPtr<GFile> dest{g_file_new_for_path(path)};
+            if (g_file_has_parent(item_file(info), dest.get()))
+                return {};
+            while (dest)
+            {
+                g_autofree char *ancestor = g_file_get_uri(dest.get());
+                if (identities->contains(ancestor))
+                    return {};
+                dest.reset(g_file_get_parent(dest.get()));
+            }
+        }
+    }
+    return folder_accepts_files(info) ? DropTarget{action, info} : DropTarget{};
+}
+
+static GdkDragAction drag_motion(GtkDropTargetAsync *target, GdkDrop *drop, double x, double y, GtkGridView *grid)
+{
+    auto hit = resolve_drop(target, drop, x, y, grid);
+    highlight_drop_target(grid, hit.recipient);
+    return hit.action;
+}
+
+static void drag_leave(GtkDropTargetAsync *, GdkDrop *, GtkGridView *grid)
+{
+    highlight_drop_target(grid, nullptr);
 }
 
 static gboolean accept_drop(GtkDropTargetAsync *target, GdkDrop *drop, double x, double y, GtkGridView *grid)
 {
-    auto action = drop_action(target, drop, x, y, grid);
+    auto [action, info] = resolve_drop(target, drop, x, y, grid);
+    highlight_drop_target(grid, nullptr);
     if (!action)
         return false;
-    GtkWindow *window = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(grid)));
-    auto *info = drop_item(target, x, y, grid);
+    auto *window = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(grid)));
     bool to_trash = info && is_trash_icon(info);
-    ObjectPtr<GFile> folder;
     auto identities = drag_identities(drop);
-    if (identities)
+    std::optional<GridCell> cell;
+    if (!info)
     {
-        if (info && !to_trash && !dragging_trash(drop) && g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY)
+        graphene_point_t from{float(x), float(y)}, point;
+        if (!gtk_widget_compute_point(GTK_WIDGET(window), GTK_WIDGET(grid), &from, &point))
+            return false;
+        guint index = grid_position_at(grid, point.x, point.y);
+        if (index == GTK_INVALID_LIST_POSITION)
+            return false;
+        if (identities)
         {
-            g_autofree char *uri = g_file_get_uri(item_file(info));
-            if (!identities->contains(uri))
-                folder = retain(item_file(info));
-        }
-        if (!folder && (!to_trash || dragging_trash(drop)))
-        {
-            bool moved = move_icons(drop, grid, GTK_WIDGET(window), x, y);
+            bool moved = move_icons(drop, grid, index);
             gdk_drop_finish(drop, moved ? GDK_ACTION_COPY : GdkDragAction{});
             return true;
         }
+        guint columns = grid_layout(grid).columns;
+        cell = GridCell{index % columns, index / columns};
     }
-    else if (info && !to_trash && g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY)
-        folder = retain(item_file(info));
     auto *selection = gtk_grid_view_get_model(grid);
     auto *site = static_cast<DropSite *>(g_object_get_data(G_OBJECT(selection), "drop-site"));
     auto *transfer = new Transfer{
         .grid = retain(grid),
         .app = retain(G_APPLICATION(gtk_window_get_application(window))),
         .site = *site,
-        .folder = std::move(folder),
+        .folder = info && !to_trash ? retain(item_file(info)) : ObjectPtr<GFile>{},
         .drop = retain(drop),
         .action = action,
         .move = bool(identities) || action == GDK_ACTION_MOVE,
         .target_identity = DropIdentity(info),
         .source_identities = std::move(identities),
         .to_trash = to_trash,
+        .drop_cell = cell,
     };
     // Prefer the file manager's original URIs to a portal export when it offers both.
     static const char *uri_formats[] = {"text/uri-list", nullptr};
@@ -351,8 +404,9 @@ void transfer_attach(GtkWindow *window, GtkGridView *grid, GFile *desktop, GHash
     GtkDropTargetAsync *target = gtk_drop_target_async_new(formats, GdkDragAction(GDK_ACTION_COPY | GDK_ACTION_MOVE));
     gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(target), GTK_PHASE_CAPTURE);
     g_signal_connect(target, "accept", G_CALLBACK(accepts_files), nullptr);
-    g_signal_connect_object(target, "drag-enter", G_CALLBACK(drop_action), grid, GConnectFlags{});
-    g_signal_connect_object(target, "drag-motion", G_CALLBACK(drop_action), grid, GConnectFlags{});
+    g_signal_connect_object(target, "drag-enter", G_CALLBACK(drag_motion), grid, GConnectFlags{});
+    g_signal_connect_object(target, "drag-motion", G_CALLBACK(drag_motion), grid, GConnectFlags{});
+    g_signal_connect_object(target, "drag-leave", G_CALLBACK(drag_leave), grid, GConnectFlags{});
     g_signal_connect_object(target, "drop", G_CALLBACK(accept_drop), grid, GConnectFlags{});
     gtk_widget_add_controller(GTK_WIDGET(window), GTK_EVENT_CONTROLLER(target));
 }

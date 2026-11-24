@@ -9,6 +9,7 @@ void notify_item_updated(DiconsItemUpdates *updates, GFileInfo *info);
 
 bool has_launcher_name(GFileInfo *info);
 bool is_desktop_launcher(GFileInfo *info);
+bool folder_accepts_files(GFileInfo *info);
 void read_launcher_presentation(GFileInfo *info, GFile *file);
 const char *item_label(GFileInfo *info);
 void cache_filename_key(GFileInfo *info);

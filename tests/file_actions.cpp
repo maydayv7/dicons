@@ -1,12 +1,14 @@
 #include "desktop_directory.hpp"
 #include "desktop_windows.hpp"
 #include "context_menu.hpp"
+#include "clipboard.hpp"
 #include "grid_layout.hpp"
 #include "icon_grid.hpp"
 #include "inline_rename.hpp"
 #include "preferences.hpp"
 #include "selection_actions.hpp"
 #include "trash_actions.hpp"
+#include "transfer.hpp"
 #include "undo.hpp"
 
 #include <filesystem>
@@ -79,19 +81,19 @@ struct Desktop
     }
 };
 
-static GtkWidget *trash_button(GtkWidget *widget)
+static GtkWidget *find_button(GtkWidget *widget, const char *label)
 {
-    if (GTK_IS_BUTTON(widget) && g_strcmp0(gtk_button_get_label(GTK_BUTTON(widget)), "Move to Trash") == 0)
+    if (GTK_IS_BUTTON(widget) && g_strcmp0(gtk_button_get_label(GTK_BUTTON(widget)), label) == 0)
         return widget;
     for (auto *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child))
-        if (auto *button = trash_button(child))
+        if (auto *button = find_button(child, label))
             return button;
     return nullptr;
 }
 
 static void confirm(GtkWindow *dialog)
 {
-    auto *button = trash_button(GTK_WIDGET(dialog));
+    auto *button = find_button(GTK_WIDGET(dialog), "Move to Trash");
     g_assert_nonnull(button);
     g_signal_emit_by_name(button, "clicked");
     wait_for([&]
@@ -186,6 +188,112 @@ static GtkGridView *mount_grid(Desktop &desktop, DesktopDirectory &directory, Gt
     gtk_fixed_put(fixed, GTK_WIDGET(scroll), 0, top);
     attach_grid_viewport(scroll, grid);
     return grid;
+}
+
+static void cut_feedback()
+{
+    Desktop d;
+    g_settings_reset(d.settings.get(), "icon-positions");
+    fs::create_directory(d.root / "Folder");
+    fs::create_directory_symlink("Folder", d.root / "Link");
+    for (auto name : {"a", "b", "Folder/b"})
+        std::ofstream(d.root / name) << name;
+    g_settings_set_boolean(d.settings.get(), "show-trash", false);
+    auto folder = d.file(".");
+    DesktopDirectory directory(folder.get(), d.app.get(), d.settings.get());
+    auto *fixed = GTK_FIXED(gtk_fixed_new());
+    gtk_window_set_child(d.window, GTK_WIDGET(fixed));
+    auto *grid = mount_grid(d, directory, fixed, 620, 0);
+    auto *mirror = mount_grid(d, directory, fixed, 320, 340);
+    transfer_attach(d.window, grid, folder.get(), directory.staging.get());
+    auto *selection = gtk_grid_view_get_model(grid);
+    auto tile = [&](GtkGridView *view, const char *name) -> GtkListItem *
+    {
+        for (guint i = 0; i < g_list_model_get_n_items(directory.items.get()); ++i)
+        {
+            ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(directory.items.get(), i))};
+            if (g_strcmp0(g_file_info_get_name(info.get()), name) == 0)
+                return bound_item(view, info.get());
+        }
+        return nullptr;
+    };
+    auto marked = [&](GtkGridView *view, const char *name)
+    {
+        auto *item = tile(view, name);
+        return item && gtk_widget_has_css_class(tile_content(item), "cut");
+    };
+    auto select = [&](const char *name, bool only = true)
+    {
+        gtk_selection_model_select_item(selection, gtk_list_item_get_position(tile(grid, name)), only);
+    };
+    wait_for([&]
+             { return tile(grid, "a") && tile(mirror, "b") && tile(grid, "Link"); });
+    select("a");
+    select("b", false);
+    copy_selection(grid, true);
+    g_assert_true(marked(grid, "a") && marked(mirror, "b"));
+    select("Link");
+    paste_selection(grid, true);
+    auto collision = d.dialog();
+    auto *skip = find_button(GTK_WIDGET(collision.get()), "Skip");
+    g_assert_nonnull(skip);
+    g_signal_emit_by_name(skip, "clicked");
+    auto *clipboard = gtk_widget_get_clipboard(GTK_WIDGET(grid));
+    wait_for([&]
+             { return !g_object_get_data(G_OBJECT(clipboard), "dicons-paste") && !tile(grid, "a"); });
+    g_assert_true(fs::exists(d.root / "Folder/a"));
+    g_assert_true(marked(grid, "b") && marked(mirror, "b"));
+    undo_latest(G_APPLICATION(d.app.get()), grid);
+    wait_for([&]
+             { return tile(grid, "a") && tile(mirror, "a"); });
+    g_assert_false(marked(grid, "a"));
+    g_assert_true(marked(grid, "b"));
+    g_assert_true(read_positions(d.settings.get()).empty());
+    auto replacement = d.root.parent_path() / "replacement";
+    std::ofstream(replacement) << "b";
+    fs::rename(replacement, d.root / "b");
+    wait_for([&]
+             { return !marked(grid, "b") && !marked(mirror, "b"); });
+    select("Link");
+    copy_selection(grid, true);
+    g_assert_true(marked(grid, "Link") && marked(mirror, "Link"));
+    auto *info = G_FILE_INFO(gtk_list_item_get_item(tile(grid, "Link")));
+    highlight_drop_target(grid, info);
+    g_assert_true(gtk_widget_has_css_class(tile_content(tile(grid, "Link")), "drop-target"));
+    g_assert_true(marked(grid, "Link") && gtk_list_item_get_selected(tile(grid, "Link")));
+    highlight_drop_target(grid, nullptr);
+    g_assert_false(gtk_widget_has_css_class(tile_content(tile(grid, "Link")), "drop-target"));
+    g_assert_true(marked(grid, "Link"));
+    copy_selection(grid, false);
+    g_assert_false(marked(mirror, "Link"));
+    paste_selection(grid, false);
+    wait_for([&]
+             { return tile(grid, "Link (1)") != nullptr; });
+    g_assert_true(fs::is_symlink(d.root / "Link (1)"));
+    g_assert_true(read_positions(d.settings.get()).empty());
+    select("Link");
+    copy_selection(grid, true);
+    gdk_clipboard_set_text(clipboard, "another owner");
+    g_assert_false(marked(grid, "Link") || marked(mirror, "Link"));
+    select("b");
+    copy_selection(grid, true);
+    select("Folder");
+    paste_selection(grid, true);
+    collision = d.dialog();
+    select("a");
+    copy_selection(grid, true);
+    g_signal_emit_by_name(find_button(GTK_WIDGET(collision.get()), "Skip"), "clicked");
+    wait_for([&]
+             { return !gtk_widget_get_visible(GTK_WIDGET(collision.get())); });
+    g_assert_true(marked(grid, "a") && !marked(grid, "b"));
+    auto latest = retain(G_FILE_INFO(gtk_list_item_get_item(tile(grid, "a"))));
+    gpointer alive = grid;
+    g_object_add_weak_pointer(G_OBJECT(grid), &alive);
+    gtk_window_set_child(d.window, nullptr);
+    wait_for([&]
+             { return !alive; });
+    g_assert_true(clipboard_item_is_cut(clipboard, latest.get()));
+    gdk_clipboard_set_content(clipboard, nullptr);
 }
 
 static void metadata_refresh()
@@ -407,5 +515,6 @@ int main(int argc, char **argv)
     g_test_add_func("/file-actions/inline-replacement", inline_replacement);
     g_test_add_func("/file-actions/metadata-refresh", metadata_refresh);
     g_test_add_func("/file-actions/grid-density", grid_density);
+    g_test_add_func("/file-actions/cut-feedback", cut_feedback);
     return g_test_run();
 }

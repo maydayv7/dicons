@@ -26,6 +26,7 @@ public:
     ~GridLayout();
     void resize(guint width, guint height);
     bool move(const std::vector<std::string> &uris, guint destination);
+    void place_drop(GFile *arrival, GridCell anchor);
 
     ObjectPtr<GListStore> slots{g_list_store_new(G_TYPE_FILE_INFO)};
     ObjectPtr<GSettings> settings;
@@ -36,6 +37,7 @@ private:
     void positions_changed();
     void items_changed(guint first, guint removed, guint added);
     void arrange();
+    std::vector<gpointer> arranged_slots(GFile *arrival = nullptr) const;
     ObjectPtr<GListModel> items_;
     IconPositions positions_;
 };

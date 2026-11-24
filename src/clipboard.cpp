@@ -100,7 +100,17 @@ namespace
                                   else if (remaining.empty())
                                       gdk_clipboard_set_content(paste->clipboard.get(), nullptr);
                                   else
-                                      offer(paste->clipboard.get(), remaining, true, std::move(identities));
+                                  {
+                                      auto pending = std::make_shared<DragIdentities>();
+                                      for (auto *file : remaining)
+                                      {
+                                          g_autofree char *uri = g_file_get_uri(file);
+                                          auto found = identities->find(uri);
+                                          if (found != identities->end())
+                                              pending->insert(*found);
+                                      }
+                                      offer(paste->clipboard.get(), remaining, true, std::move(pending));
+                                  }
                               });
     }
 
@@ -261,20 +271,23 @@ bool clipboard_has_files(GdkClipboard *clipboard)
 
 void copy_selection(GtkGridView *grid, bool cut)
 {
-    auto files = selected_files(gtk_grid_view_get_model(grid));
+    auto identities = cut ? std::make_shared<DragIdentities>() : nullptr;
+    auto files = selected_files(gtk_grid_view_get_model(grid), identities.get());
     if (files.empty())
         return;
-    std::shared_ptr<DragIdentities> identities;
-    if (cut)
-    {
-        identities = std::make_shared<DragIdentities>();
-        for (auto *file : files)
-        {
-            g_autofree char *uri = g_file_get_uri(file);
-            identities->emplace(uri, file_identity(file));
-        }
-    }
     offer(gtk_widget_get_clipboard(GTK_WIDGET(grid)), files, cut, std::move(identities));
+}
+
+bool clipboard_item_is_cut(GdkClipboard *clipboard, GFileInfo *info)
+{
+    auto *content = gdk_clipboard_get_content(clipboard);
+    auto *cut = content ? static_cast<CutIdentities *>(g_object_get_data(G_OBJECT(content), "cut-identities")) : nullptr;
+    auto *file = item_file(info);
+    if (!cut || !file)
+        return false;
+    g_autofree char *uri = g_file_get_uri(file);
+    auto found = (*cut)->find(uri);
+    return found != (*cut)->end() && !found->second.id.empty() && found->second == cached_identity(info);
 }
 
 void paste_selection(GtkGridView *grid, bool into_folder)

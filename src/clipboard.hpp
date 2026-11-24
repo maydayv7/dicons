@@ -5,6 +5,7 @@
 #include <vector>
 
 bool clipboard_has_files(GdkClipboard *clipboard);
+bool clipboard_item_is_cut(GdkClipboard *clipboard, GFileInfo *info);
 void copy_selection(GtkGridView *grid, bool cut);
 void paste_selection(GtkGridView *grid, bool into_folder);
 

@@ -124,7 +124,7 @@ public:
 private:
     static constexpr auto attributes = "standard::name,standard::display-name,standard::edit-name,standard::icon,"
                                        "standard::type,standard::is-hidden,standard::is-symlink,standard::symlink-target,"
-                                       "standard::content-type,standard::size,access::can-read,"
+                                       "standard::content-type,standard::size,access::can-read,access::can-write,access::can-execute,"
                                        "time::modified,time::modified-nsec,id::file,time::created,time::created-nsec";
     ObjectPtr<GtkDirectoryList> scan_;
     ObjectPtr<GFile> folder_;
@@ -243,6 +243,8 @@ private:
 
     void apply(GFile *file, GFileInfo *info)
     {
+        if (!info)
+            relocate_position(settings_.get(), file, nullptr);
         auto *model = G_LIST_MODEL(entries.get());
         g_autofree char *name = g_file_get_basename(file);
         guint first = 0;
@@ -264,7 +266,6 @@ private:
                 }
                 else
                 {
-                    relocate_position(settings_.get(), file, nullptr);
                     g_list_store_remove(entries.get(), i);
                 }
                 return;
@@ -289,7 +290,9 @@ private:
                       g_file_info_get_file_type(current) != g_file_info_get_file_type(next) ||
                       g_file_info_get_is_symlink(current) != g_file_info_get_is_symlink(next) ||
                       (previews_enabled && can_preview(current) != preview) ||
-                      (preview && ThumbnailVersion(current) != ThumbnailVersion(next));
+                      (preview && ThumbnailVersion(current) != ThumbnailVersion(next)) ||
+                      folder_accepts_files(current) != folder_accepts_files(next) ||
+                      cached_identity(current) != cached_identity(next);
         g_file_info_copy_into(next, current);
         update_link_watch(current);
         if (membership_changed || order_changed)

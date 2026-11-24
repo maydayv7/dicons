@@ -190,7 +190,7 @@ static guint position_of(GListModel *model, std::string_view name)
     for (guint i = 0; i < g_list_model_get_n_items(model); ++i)
     {
         ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(model, i))};
-        if (g_file_info_get_name(info.get()) == name)
+        if (item_file(info.get()) && g_file_info_get_name(info.get()) == name)
             return i;
     }
     return GTK_INVALID_LIST_POSITION;
@@ -371,6 +371,58 @@ static void manual_layout()
     g_action_group_activate_action(G_ACTION_GROUP(directory.sorting.actions.get()), "field", g_variant_new_string("name"));
     g_assert_true(at(0) == "Trash" && at(1) == "b");
     g_assert_cmpuint(g_list_model_get_n_items(slots), ==, 2);
+}
+
+static void external_drop_positions()
+{
+    auto root = fs::path(g_get_user_data_dir()) / "Desktop";
+    fs::create_directories(root);
+    ObjectPtr<GFile> folder{g_file_new_for_path(root.c_str())};
+    auto child = [&](const char *name)
+    { return ObjectPtr<GFile>{g_file_get_child(folder.get(), name)}; };
+    std::ofstream{root / "m"};
+    std::ofstream{root / "z"};
+    auto preferences = test_preferences();
+    g_settings_set_boolean(preferences.get(), "show-trash", false);
+    ObjectPtr<GtkApplication> app{gtk_application_new(nullptr, G_APPLICATION_NON_UNIQUE)};
+    DesktopDirectory directory(folder.get(), app.get(), preferences.get());
+    GridLayout layout(directory.items.get(), preferences.get());
+    layout.resize(3, 2);
+    auto *slots = G_LIST_MODEL(layout.slots.get());
+    g_assert_true(wait_for([&]
+                           { return g_list_model_get_n_items(slots) == 2; }));
+    auto position = [&](const char *name)
+    { return position_of(slots, name); };
+    auto a = child("a");
+    std::ofstream{root / "a"};
+    g_assert_true(wait_for([&]
+                           { return position("a") == 0; }));
+    layout.place_drop(a.get(), {0, 0});
+    g_assert_cmpuint(position("m"), ==, 0);
+    g_assert_cmpuint(position("z"), ==, 1);
+    g_assert_cmpuint(position("a"), ==, 3);
+    layout.place_drop(child("b").get(), {0, 0});
+    layout.place_drop(child("c").get(), {0, 0});
+    layout.place_drop(child("d").get(), {0, 0});
+    layout.place_drop(child("e").get(), {0, 0});
+    for (auto name : {"b", "c", "d", "e"})
+        std::ofstream{root / name};
+    g_assert_true(wait_for([&]
+                           { return g_list_model_get_n_items(directory.items.get()) == 7; }));
+    for (auto [name, slot] : {std::pair{"m", 0}, {"z", 1}, {"b", 2}, {"a", 3}, {"c", 4}, {"d", 5}, {"e", 6}})
+        g_assert_cmpuint(position(name), ==, slot);
+    g_assert_cmpuint(read_positions(preferences.get()).size(), ==, 5);
+    fs::remove(root / "a");
+    g_assert_true(wait_for([&]
+                           { return read_positions(preferences.get()).size() == 4; }));
+    g_autofree char *uri = g_file_get_uri(a.get());
+    auto saved = read_positions(preferences.get());
+    saved[uri] = {0, 0};
+    write_positions(preferences.get(), saved);
+    layout.place_drop(a.get(), {2, 2});
+    std::ofstream{root / "a"};
+    g_assert_true(wait_for([&]
+                           { return position("a") == 8; }));
 }
 
 static void pinned_trash()
@@ -775,6 +827,7 @@ int main(int argc, char **argv)
     g_test_add_func("/directory/first-managed-keyfile", first_managed_keyfile);
     g_test_add_func("/directory/live-keyfile-declarations", live_keyfile_declarations);
     g_test_add_func("/directory/manual-layout", manual_layout);
+    g_test_add_func("/directory/external-drop-positions", external_drop_positions);
     g_test_add_func("/directory/pinned-trash", pinned_trash);
     g_test_add_func("/directory/atomic-saves", atomic_saves);
     g_test_add_func("/directory/desktop-folder-events", desktop_folder_events);

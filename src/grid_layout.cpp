@@ -1,6 +1,8 @@
 #include "grid_layout.hpp"
 #include "desktop_directory.hpp"
 #include <algorithm>
+#include <cstdlib>
+#include <limits>
 #include <set>
 
 IconPositions read_positions(GSettings *settings)
@@ -121,21 +123,29 @@ static void replace_slots(GListStore *slots, std::vector<gpointer> &next)
         g_list_store_splice(slots, first, old_end - first, end > first ? next.data() + first : nullptr, end - first);
 }
 
-void GridLayout::arrange()
+std::vector<gpointer> GridLayout::arranged_slots(GFile *arrival) const
 {
     const auto count = g_list_model_get_n_items(items_.get());
-    const guint limit = std::max(rows, (count + columns - 1) / columns);
-    // Reserve saved cells before filling gaps
-    std::vector<gpointer> next(count);
-    std::vector<GFileInfo *> unplaced;
+    std::vector<GFileInfo *> entries;
+    entries.reserve(count);
+    // The directory monitor may already have listed the new file before its transfer completes.
     for (guint i = 0; i < count; ++i)
     {
         ObjectPtr<GFileInfo> info{G_FILE_INFO(g_list_model_get_item(items_.get(), i))};
-        g_autofree char *uri = g_file_get_uri(item_file(info.get()));
+        if (!arrival || !g_file_equal(item_file(info.get()), arrival))
+            entries.push_back(info.get());
+    }
+    const guint total = entries.size() + (arrival != nullptr);
+    const guint limit = std::max(rows, (total + columns - 1) / columns);
+    std::vector<gpointer> next(entries.size());
+    std::vector<GFileInfo *> unplaced;
+    for (auto *info : entries)
+    {
+        g_autofree char *uri = g_file_get_uri(item_file(info));
         auto found = positions_.find(uri);
         if (found == positions_.end() || found->second.column >= columns || found->second.row >= limit)
         {
-            unplaced.push_back(info.get());
+            unplaced.push_back(info);
             continue;
         }
         auto [x, y] = found->second;
@@ -143,9 +153,9 @@ void GridLayout::arrange()
         if (index >= next.size())
             next.resize(index + 1);
         if (next[index])
-            unplaced.push_back(info.get());
+            unplaced.push_back(info);
         else
-            next[index] = info.get();
+            next[index] = info;
     }
     size_t cursor = 0;
     for (auto *info : unplaced)
@@ -159,7 +169,49 @@ void GridLayout::arrange()
         ++cursor;
     }
 
+    return next;
+}
+
+void GridLayout::arrange()
+{
+    auto next = arranged_slots();
     replace_slots(slots.get(), next);
+}
+
+void GridLayout::place_drop(GFile *arrival, GridCell anchor)
+{
+    g_autofree char *uri = g_file_get_uri(arrival);
+    if (!g_settings_is_writable(settings.get(), "icon-positions"))
+        return;
+    auto existing = arranged_slots(arrival);
+    std::set<guint64> reserved;
+    for (const auto &[name, cell] : positions_)
+        if (name != uri && cell.column < columns)
+            reserved.insert(guint64(cell.row) * columns + cell.column);
+    // Search the current grid first
+    guint count = std::ranges::count_if(existing, [](gpointer item)
+                                        { return item != nullptr; });
+    guint limit = std::max(rows, count / columns + 1);
+    anchor.column = std::min(anchor.column, columns - 1);
+    anchor.row = std::min(anchor.row, limit - 1);
+    GridCell nearest{};
+    guint64 best = std::numeric_limits<guint64>::max();
+    for (guint y = 0; y < limit || best == std::numeric_limits<guint64>::max(); ++y)
+        for (guint x = 0; x < columns; ++x)
+        {
+            guint64 slot = guint64(y) * columns + x;
+            if ((slot < existing.size() && existing[slot]) || reserved.contains(slot))
+                continue;
+            guint64 distance = std::abs(gint64(x) - anchor.column) + std::abs(gint64(y) - anchor.row);
+            if (distance < best)
+            {
+                nearest = {x, y};
+                best = distance;
+            }
+        }
+    auto saved = positions_;
+    saved[uri] = nearest;
+    write_positions(settings.get(), saved);
 }
 
 bool GridLayout::move(const std::vector<std::string> &uris, guint destination)

@@ -6,6 +6,7 @@
 #include "launch.hpp"
 #include "desktop_item.hpp"
 #include "item_icon.hpp"
+#include "clipboard.hpp"
 
 #include <algorithm>
 #include <unordered_map>
@@ -19,6 +20,7 @@ namespace
         int cell_height{};
         guint resize_tick{};
         std::unordered_map<GFileInfo *, GtkListItem *> bound;
+        GtkListItem *drop_target{};
     };
 
     Grid &state(GtkGridView *grid)
@@ -65,6 +67,24 @@ GtkWidget *tile_content(GtkListItem *item)
     return gtk_widget_get_first_child(gtk_list_item_get_child(item));
 }
 
+GridLayout &grid_layout(GtkGridView *grid)
+{
+    return state(grid).layout;
+}
+
+void highlight_drop_target(GtkGridView *grid, GFileInfo *info)
+{
+    auto &current = state(grid).drop_target;
+    auto *next = bound_item(grid, info);
+    if (current == next)
+        return;
+    if (current)
+        gtk_widget_remove_css_class(tile_content(current), "drop-target");
+    current = next;
+    if (next)
+        gtk_widget_add_css_class(tile_content(next), "drop-target");
+}
+
 static GtkListItem *target_slot(GtkWidget *widget, GtkGridView *grid)
 {
     while (widget && gtk_widget_get_parent(widget) != GTK_WIDGET(grid))
@@ -88,6 +108,21 @@ static void refresh_item(GtkListItem *item)
     bind_item_icon(icon, info);
 }
 
+static void update_cut(GtkListItem *item, GFileInfo *info, GdkClipboard *clipboard)
+{
+    auto *tile = tile_content(item);
+    if (clipboard_item_is_cut(clipboard, info))
+        gtk_widget_add_css_class(tile, "cut");
+    else
+        gtk_widget_remove_css_class(tile, "cut");
+}
+
+static void clipboard_changed(GdkClipboard *clipboard, GtkGridView *grid)
+{
+    for (auto &[info, item] : state(grid).bound)
+        update_cut(item, info, clipboard);
+}
+
 static void bind_item(GtkListItemFactory *, GtkListItem *item, Grid *grid)
 {
     auto *info = G_FILE_INFO(gtk_list_item_get_item(item));
@@ -99,11 +134,20 @@ static void bind_item(GtkListItemFactory *, GtkListItem *item, Grid *grid)
     grid->bound.emplace(info, item);
     gtk_widget_set_size_request(gtk_list_item_get_child(item), -1, grid->cell_height);
     if (occupied)
+    {
         refresh_item(item);
+        update_cut(item, info, gtk_widget_get_clipboard(tile_content(item)));
+    }
 }
 
 static void unbind_item(GtkListItemFactory *, GtkListItem *item, Grid *grid)
 {
+    gtk_widget_remove_css_class(tile_content(item), "cut");
+    if (grid->drop_target == item)
+    {
+        gtk_widget_remove_css_class(tile_content(item), "drop-target");
+        grid->drop_target = nullptr;
+    }
     grid->bound.erase(G_FILE_INFO(gtk_list_item_get_item(item)));
     unbind_item_icon(gtk_widget_get_first_child(tile_content(item)));
 }
@@ -111,7 +155,12 @@ static void unbind_item(GtkListItemFactory *, GtkListItem *item, Grid *grid)
 static void entry_updated(DiconsItemUpdates *, GFileInfo *changed, GtkGridView *grid)
 {
     if (auto *item = bound_item(grid, changed))
+    {
         refresh_item(item);
+        update_cut(item, changed, gtk_widget_get_clipboard(GTK_WIDGET(grid)));
+        if (state(grid).drop_target == item && !is_trash_icon(changed) && !folder_accepts_files(changed))
+            highlight_drop_target(grid, nullptr);
+    }
 }
 
 struct DesktopDrag
@@ -169,18 +218,15 @@ guint grid_position_at(GtkGridView *grid, double x, double y)
     return row * layout.columns + column;
 }
 
-bool move_icons(GdkDrop *drop, GtkGridView *grid, GtkWidget *window, double x, double y)
+bool move_icons(GdkDrop *drop, GtkGridView *grid, guint position)
 {
     auto *drag = desktop_drag(drop);
-    graphene_point_t from{float(x), float(y)}, point;
-    if (!drag || !gtk_widget_compute_point(window, GTK_WIDGET(grid), &from, &point))
-        return false;
-    guint position = grid_position_at(grid, point.x, point.y);
-    if (position == GTK_INVALID_LIST_POSITION)
+    auto *window = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(grid)));
+    if (!drag || !window || position == GTK_INVALID_LIST_POSITION)
         return false;
     auto &layout = state(grid).layout;
     bool moved = false;
-    change_view(G_APPLICATION(gtk_window_get_application(GTK_WINDOW(window))), layout.settings.get(), nullptr,
+    change_view(G_APPLICATION(gtk_window_get_application(window)), layout.settings.get(), nullptr,
                 [&]
                 { moved = layout.move(drag->uris, position); });
     return moved;
@@ -352,6 +398,7 @@ GtkGridView *create_icon_grid(const DesktopDirectory &directory, GtkApplication 
     auto *selection = gtk_multi_selection_new(G_LIST_MODEL(g_object_ref(data->layout.slots.get())));
     g_signal_connect(selection, "selection-changed", G_CALLBACK(exclude_empty_cells), nullptr);
     auto *grid = GTK_GRID_VIEW(gtk_grid_view_new(GTK_SELECTION_MODEL(selection), factory));
+    g_signal_connect_object(gtk_widget_get_clipboard(GTK_WIDGET(grid)), "changed", G_CALLBACK(clipboard_changed), grid, GConnectFlags{});
     for (auto signal : {"changed::icon-size", "changed::grid-density"})
         g_signal_connect_object(directory.preferences.get(), signal, G_CALLBACK(+[](GSettings *, const char *, GtkGridView *grid)
                                                                                 { arrange(grid); }),

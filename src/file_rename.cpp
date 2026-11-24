@@ -48,14 +48,19 @@ void cache_link_identity(GFileInfo *info, GFile *file)
     }
 }
 
-DropIdentity listed_identity(GFileInfo *info, GFile *file)
+DropIdentity cached_identity(GFileInfo *info)
 {
     if (!g_file_info_get_is_symlink(info))
         return DropIdentity(info);
-    // Initial directory listings are visible before their background link refresh
-    if (!g_file_info_has_attribute(info, link_identity))
-        cache_link_identity(info, file);
     return DropIdentity(G_FILE_INFO(g_file_info_get_attribute_object(info, link_identity)));
+}
+
+DropIdentity listed_identity(GFileInfo *info, GFile *file)
+{
+    // Initial directory listings are visible before their background link refresh
+    if (g_file_info_get_is_symlink(info) && !g_file_info_has_attribute(info, link_identity))
+        cache_link_identity(info, file);
+    return cached_identity(info);
 }
 
 const DropIdentity *verify_drag_source(const DragIdentities &identities, GFile *source, GError **error)
