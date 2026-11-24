@@ -32,6 +32,7 @@ namespace
         bool running{};
         uint64_t sequence{};
         ObjectPtr<GSettings> preferences;
+        ObjectPtr<GFile> desktop;
     };
 
     History &history(GApplication *app)
@@ -77,9 +78,11 @@ static void trim_history(History &state)
     }
 }
 
-void attach_undo_preferences(GApplication *app, GSettings *settings)
+void attach_undo_preferences(GApplication *app, GSettings *settings, GFile *desktop)
 {
-    history(app).preferences = retain(settings);
+    auto &state = history(app);
+    state.preferences = retain(settings);
+    state.desktop = retain(desktop);
 }
 
 UndoToken begin_undo_step(GApplication *app)
@@ -216,12 +219,10 @@ static void undo_finished(GObject *source, GAsyncResult *, gpointer)
     step->errors.clear();
     IconPositions positions;
     bool place = false;
-    const char *desktop_path = g_get_user_special_dir(G_USER_DIRECTORY_DESKTOP);
-    ObjectPtr<GFile> desktop{desktop_path ? g_file_new_for_path(desktop_path) : nullptr};
     bool select_first = true;
     for (auto &item : step->restored)
     {
-        if (desktop && g_file_has_parent(item.actual.get(), desktop.get()))
+        if (state.desktop && g_file_has_parent(item.actual.get(), state.desktop.get()))
         {
             g_autofree char *from = g_file_get_uri(item.original.get());
             if (auto cell = step->positions.find(from); cell != step->positions.end())

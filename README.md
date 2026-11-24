@@ -8,7 +8,7 @@
 
 ## Features
 
-- [x] Use `XDG_USER_DIR` for the Desktop directory
+- [x] Show the XDG Desktop directory or a folder of your choice
 - [x] Start default application for selected file
 - [x] Update icons when files are added, removed, renamed, or edited
 - [x] Drag and Drop files from/to the Desktop
@@ -108,6 +108,7 @@ The following shows the defaults:
 
 ```ini
 [dev/maydayv7/dicons]
+directory=''
 folders-first=true
 icon-size=48  # 24-128
 show-trash=true
@@ -115,6 +116,9 @@ show-thumbnails=true
 sort-field='name'  # name/type/modified/size
 sort-direction='ascending'  # ascending/descending
 ```
+
+To show an existing local directory, set its absolute path and restart `dicons`.
+An empty value uses the XDG Desktop directory (which is created if missing).
 
 **Show Hidden Items** (Ctrl H) applies only to the current session.
 
@@ -125,6 +129,7 @@ To use this file explicitly, start `dicons` with `GSETTINGS_BACKEND=keyfile`.
 
 ```ini
 [desktop]
+directory='/home/alex/Projects'
 icon-size=48
 show-trash=true
 ```

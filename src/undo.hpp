@@ -7,7 +7,7 @@
 
 struct UndoStep;
 using UndoToken = std::shared_ptr<UndoStep>;
-void attach_undo_preferences(GApplication *app, GSettings *settings);
+void attach_undo_preferences(GApplication *app, GSettings *settings, GFile *desktop);
 UndoToken begin_undo_step(GApplication *app);
 void remember_file(const UndoToken &step, GFile *result, GFile *original = nullptr, DropIdentity previous = DropIdentity{});
 void remember_trash(const UndoToken &step, TrashedFile entry);

@@ -4,8 +4,6 @@
 #include "undo.hpp"
 
 #include <gtk4-layer-shell.h>
-#include <glib/gstdio.h>
-#include <cerrno>
 #include <cstdlib>
 #include <optional>
 
@@ -45,18 +43,20 @@ namespace
                 return;
             }
 
-            const char *path = g_get_user_special_dir(G_USER_DIRECTORY_DESKTOP);
-            if (!path || g_mkdir_with_parents(path, 0777) == -1)
+            auto preferences = desktop_preferences();
+            g_autoptr(GError) error = nullptr;
+            auto folder = open_desktop_folder(preferences.get(), &error);
+            if (!folder)
             {
-                g_printerr("Cannot open Desktop folder %s: %s\n", path ? path : "(unset)",
-                           path ? g_strerror(errno) : "no XDG Desktop path");
-                exit_status_ = EXIT_FAILURE;
+                if (error)
+                {
+                    g_printerr("%s\n", error->message);
+                    exit_status_ = EXIT_FAILURE;
+                }
                 return;
             }
 
-            ObjectPtr<GFile> folder{g_file_new_for_path(path)};
-            auto preferences = desktop_preferences();
-            attach_undo_preferences(G_APPLICATION(app_.get()), preferences.get());
+            attach_undo_preferences(G_APPLICATION(app_.get()), preferences.get(), folder.get());
             directory_.emplace(folder.get(), app_.get(), preferences.get());
             auto *display = gdk_display_get_default();
             install_desktop_style(display);

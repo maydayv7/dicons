@@ -9,6 +9,7 @@ using FileSet = std::unique_ptr<GHashTable, GlibDeleter<g_hash_table_unref>>;
 
 [[nodiscard]] FileSet make_file_set();
 GFile *item_file(GFileInfo *info);
+ObjectPtr<GFile> open_desktop_folder(GSettings *settings, GError **error);
 
 struct DesktopDirectory
 {

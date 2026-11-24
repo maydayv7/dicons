@@ -339,11 +339,8 @@ static void restored_position()
 {
     Fixture f;
     auto settings = desktop_preferences();
-    attach_undo_preferences(f.app.get(), settings.get());
-    fs::create_directories(g_get_user_config_dir());
-    std::ofstream(fs::path(g_get_user_config_dir()) / "user-dirs.dirs") << "XDG_DESKTOP_DIR=\"" << f.root.string() << "\"\n";
-    g_reload_user_special_dirs_cache();
     ObjectPtr<GFile> desktop{g_file_new_for_path(f.root.c_str())};
+    attach_undo_preferences(f.app.get(), settings.get(), desktop.get());
     ObjectPtr<GFile> original{g_file_get_child(desktop.get(), "positioned")};
     g_autofree char *uri = g_file_get_uri(original.get());
     auto moved = f.file("elsewhere");

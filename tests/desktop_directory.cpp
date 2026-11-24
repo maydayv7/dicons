@@ -11,6 +11,7 @@
 #include <fstream>
 #include <string_view>
 #include <thread>
+#include <unistd.h>
 
 using namespace std::chrono_literals;
 namespace fs = std::filesystem;
@@ -19,6 +20,80 @@ static ObjectPtr<GSettings> test_preferences()
 {
     ObjectPtr<GSettingsBackend> backend{g_memory_settings_backend_new()};
     return desktop_preferences(backend.get());
+}
+
+static void desktop_folder_setting()
+{
+    auto settings = test_preferences();
+    const fs::path data = g_get_user_data_dir();
+    const auto xdg = data / "missing" / "XDG Desktop";
+    const auto custom = data / "My icons";
+    fs::create_directories(custom);
+    fs::create_directories(g_get_user_config_dir());
+    auto set_xdg = [](const fs::path &path)
+    {
+        std::ofstream(fs::path(g_get_user_config_dir()) / "user-dirs.dirs") << "XDG_DESKTOP_DIR=\"" << path.string() << "\"\n";
+        g_reload_user_special_dirs_cache();
+    };
+    set_xdg(xdg);
+    g_autoptr(GError) error = nullptr;
+    g_settings_set_string(settings.get(), "directory", custom.c_str());
+    auto folder = open_desktop_folder(settings.get(), &error);
+    g_assert_no_error(error);
+    g_assert_cmpstr(g_file_peek_path(folder.get()), ==, custom.c_str());
+    g_assert_false(fs::exists(xdg));
+
+    g_settings_reset(settings.get(), "directory");
+    folder = open_desktop_folder(settings.get(), &error);
+    g_assert_no_error(error);
+    g_assert_cmpstr(g_file_peek_path(folder.get()), ==, xdg.c_str());
+    g_assert_true(fs::is_directory(xdg));
+
+    set_xdg(g_get_home_dir());
+    g_assert_null(open_desktop_folder(settings.get(), &error).get());
+    g_assert_no_error(error);
+    fs::create_directories(g_get_home_dir());
+    const auto alias = data / "home-link";
+    fs::create_directory_symlink(g_get_home_dir(), alias);
+    set_xdg(alias);
+    g_assert_null(open_desktop_folder(settings.get(), &error).get());
+    g_assert_no_error(error);
+    g_settings_set_string(settings.get(), "directory", g_get_home_dir());
+    folder = open_desktop_folder(settings.get(), &error);
+    g_assert_no_error(error);
+    g_assert_cmpstr(g_file_peek_path(folder.get()), ==, g_get_home_dir());
+}
+
+static void invalid_desktop_folder()
+{
+    auto settings = test_preferences();
+    auto rejected = [&](const fs::path &path, GFileError code)
+    {
+        g_settings_set_string(settings.get(), "directory", path.c_str());
+        g_autoptr(GError) error = nullptr;
+        g_assert_null(open_desktop_folder(settings.get(), &error).get());
+        g_assert_error(error, G_FILE_ERROR, code);
+    };
+    rejected("relative", G_FILE_ERROR_INVAL);
+    rejected("file:///tmp", G_FILE_ERROR_INVAL);
+    const fs::path data = g_get_user_data_dir();
+    fs::create_directories(data);
+    const auto path = data / "not a directory";
+    rejected(path, G_FILE_ERROR_NOENT);
+    g_assert_false(fs::exists(path));
+    std::ofstream(path) << "existing file";
+    rejected(path, G_FILE_ERROR_NOTDIR);
+    if (getuid() != 0)
+    {
+        const auto restricted = data / "restricted";
+        fs::create_directory(restricted);
+        for (auto mode : {fs::perms::owner_read, fs::perms::owner_exec})
+        {
+            fs::permissions(restricted, mode);
+            rejected(restricted, G_FILE_ERROR_ACCES);
+        }
+        fs::permissions(restricted, fs::perms::owner_all);
+    }
 }
 
 static void settings_without_dconf()
@@ -40,8 +115,14 @@ static void settings_without_dconf()
     g_assert_cmpint(g_key_file_get_integer(ini, "desktop", "icon-size", nullptr), ==, 72);
     settings.reset();
 
-    std::ofstream(path) << "[desktop]\nicon-size=32\nshow-trash=false\nsort-field='size'\n";
+    const auto custom = fs::path(g_get_user_data_dir()) / "Desktop icons";
+    fs::create_directories(custom);
+    std::ofstream(path) << "[desktop]\ndirectory='" << custom.string() << "'\nicon-size=32\nshow-trash=false\nsort-field='size'\n";
     settings = desktop_preferences();
+    g_autoptr(GError) error = nullptr;
+    auto folder = open_desktop_folder(settings.get(), &error);
+    g_assert_no_error(error);
+    g_assert_cmpstr(g_file_peek_path(folder.get()), ==, custom.c_str());
     g_assert_cmpint(g_settings_get_int(settings.get(), "icon-size"), ==, 32);
     g_assert_false(g_settings_get_boolean(settings.get(), "show-trash"));
     g_autofree char *field = g_settings_get_string(settings.get(), "sort-field");
@@ -532,6 +613,8 @@ int main(int argc, char **argv)
     g_setenv("GIO_USE_VFS", "local", true);
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, nullptr);
     g_test_add_func("/directory/stored-preferences", stored_preferences);
+    g_test_add_func("/directory/desktop-folder-setting", desktop_folder_setting);
+    g_test_add_func("/directory/invalid-desktop-folder", invalid_desktop_folder);
     g_test_add_func("/directory/settings-without-dconf", settings_without_dconf);
     g_test_add_func("/directory/manual-layout", manual_layout);
     g_test_add_func("/directory/pinned-trash", pinned_trash);

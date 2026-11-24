@@ -4,7 +4,52 @@
 #include "symlink.hpp"
 #include "grid_layout.hpp"
 
+#include <glib/gstdio.h>
+#include <cerrno>
 #include <deque>
+#include <filesystem>
+#include <unistd.h>
+
+ObjectPtr<GFile> open_desktop_folder(GSettings *settings, GError **error)
+{
+    g_autofree char *configured = g_settings_get_string(settings, "directory");
+    const bool use_xdg = *configured == '\0';
+    const char *path = use_xdg ? g_get_user_special_dir(G_USER_DIRECTORY_DESKTOP) : configured;
+    if (!path)
+    {
+        g_set_error_literal(error, G_FILE_ERROR, G_FILE_ERROR_NOENT, "No XDG Desktop directory is configured.");
+        return nullptr;
+    }
+    if (!g_path_is_absolute(path))
+    {
+        g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "The directory setting must be an absolute local path: %s", path);
+        return nullptr;
+    }
+
+    ObjectPtr<GFile> folder{g_file_new_for_path(path)};
+    path = g_file_peek_path(folder.get());
+    if (use_xdg)
+    {
+        std::error_code ec;
+        if (g_str_equal(path, g_get_home_dir()) || std::filesystem::equivalent(path, g_get_home_dir(), ec))
+            return nullptr;
+        if (g_mkdir_with_parents(path, 0777) == -1)
+        {
+            g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno), "Cannot create desktop directory %s: %s", path, g_strerror(errno));
+            return nullptr;
+        }
+    }
+
+    g_autoptr(GDir) dir = g_dir_open(path, 0, error);
+    if (!dir)
+        return nullptr;
+    if (g_access(path, X_OK) == -1)
+    {
+        g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno), "Cannot access desktop directory %s: %s", path, g_strerror(errno));
+        return nullptr;
+    }
+    return folder;
+}
 
 GFile *item_file(GFileInfo *info)
 {
