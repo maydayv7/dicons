@@ -1,0 +1,41 @@
+pkgname=dicons-git
+pkgver=0
+pkgrel=1
+pkgdesc='Desktop icons for Wayland compositors with layer-shell support'
+arch=('x86_64')
+url='https://github.com/maydayv7/dicons'
+license=('GPL-3.0-only')
+depends=('gcc-libs' 'glibc' 'glib2>=2.74' 'gtk4>=4.12' 'gtk4-layer-shell' 'hicolor-icon-theme')
+makedepends=('cmake' 'git' 'glib2-devel' 'ninja')
+optdepends=('xdg-terminal-exec: Open in Terminal')
+
+if [[ -n ${DICONS_RELEASE_TAG:-} ]]; then
+    pkgname=dicons
+    pkgver=${DICONS_RELEASE_TAG#v}
+    source=("dicons-$pkgver.tar.gz")
+    sha256sums=("${DICONS_SOURCE_SHA256:?expected the release archive checksum}")
+else
+    provides=('dicons')
+    conflicts=('dicons')
+    source=("git+$url.git")
+    sha256sums=('SKIP')
+
+    pkgver() {
+        cd "$srcdir/dicons"
+        printf 'r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+    }
+fi
+
+build() {
+    cmake -S "$srcdir/dicons" -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DDICONS_PACKAGE_VERSION="$pkgver"
+    cmake --build build
+}
+
+check() {
+    ctest --test-dir build --output-on-failure
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install build
+}

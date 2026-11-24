@@ -69,6 +69,18 @@ hl.layer_rule({ match = { namespace = "^dicons$" }, order = 0 })
 
 ### Installation
 
+Download the package for your distribution from the [Releases](https://github.com/maydayv7/dicons/releases) page.
+
+| Distribution | Install the downloaded package          |
+| ------------ | --------------------------------------- |
+| Debian 13    | `sudo apt install ./dicons_*.deb`       |
+| Fedora 44    | `sudo dnf install ./dicons-*.rpm`       |
+| Arch Linux   | `sudo pacman -U ./dicons-*.pkg.tar.zst` |
+
+To build the development version on Arch, install `base-devel` and `git`, clone this repo, and run `makepkg -si` from `packaging/arch/`.
+
+#### Build from source
+
 ```sh
 git clone https://github.com/maydayv7/dicons
 cd dicons

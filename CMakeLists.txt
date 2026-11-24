@@ -110,7 +110,10 @@ if(BUILD_TESTING)
     set_tests_properties(desktop-undo PROPERTIES ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
     dicons_test(file-actions file_actions.cpp)
     target_sources(test-file-actions PRIVATE dicons-resources.c)
-    set_tests_properties(desktop-file-actions PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
+    set_tests_properties(
+        desktop-file-actions PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT
+                                        "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+    )
 endif()
 
 install(TARGETS dicons RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
@@ -124,8 +127,24 @@ install(
     DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
     RENAME "${dicons_app_id}.svg"
 )
-install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/dicons")
+if(CPACK_GENERATOR STREQUAL "DEB")
+    install(
+        FILES LICENSE
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/dicons"
+        RENAME copyright
+    )
+else()
+    install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/dicons")
+endif()
 
+set(DICONS_PACKAGE_VERSION
+    ""
+    CACHE STRING "Version for a native distribution package"
+)
+set(unit_dir "${CMAKE_INSTALL_DATADIR}/systemd/user")
+if(DICONS_PACKAGE_VERSION)
+    set(unit_dir "lib/systemd/user")
+endif()
 set(unit_bindir "${CMAKE_INSTALL_BINDIR}")
 if(NOT IS_ABSOLUTE "${unit_bindir}")
     set(unit_bindir "\${CMAKE_INSTALL_PREFIX}/${unit_bindir}")
@@ -138,10 +157,14 @@ install(
                    \"${CMAKE_CURRENT_BINARY_DIR}/dicons.service\" @ONLY)
 "
 )
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/dicons.service" DESTINATION "${CMAKE_INSTALL_DATADIR}/systemd/user")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/dicons.service" DESTINATION "${unit_dir}")
 
 set(schema_dir "${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas")
 install(FILES "data/${schema_name}" DESTINATION "${schema_dir}")
+if(DICONS_PACKAGE_VERSION)
+    include(packaging/CPack.cmake)
+    return()
+endif()
 if(NOT IS_ABSOLUTE "${schema_dir}")
     set(schema_dir "\${CMAKE_INSTALL_PREFIX}/${schema_dir}")
 endif()

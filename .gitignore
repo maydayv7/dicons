@@ -1,5 +1,7 @@
 .cache/
-/build/
 .direnv/
+.vscode/
+
+/build/
 /result
 /result-*
