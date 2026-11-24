@@ -5,6 +5,25 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <string>
+#include <vector>
+
+static bool list_children(GFile *folder, std::vector<std::string> &names, GError **error)
+{
+    g_autoptr(GFileEnumerator) children = g_file_enumerate_children(folder, G_FILE_ATTRIBUTE_STANDARD_NAME,
+                                                                    G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, error);
+    if (!children)
+        return false;
+    for (;;)
+    {
+        GFileInfo *info;
+        if (!g_file_enumerator_iterate(children, &info, nullptr, nullptr, error))
+            return false;
+        if (!info)
+            return g_file_enumerator_close(children, nullptr, error);
+        names.emplace_back(g_file_info_get_name(info));
+    }
+}
 
 static gboolean copy_tree(GFile *source, GFile *target, const char *stage_id, GError **error)
 {
@@ -33,19 +52,13 @@ static gboolean copy_tree(GFile *source, GFile *target, const char *stage_id, GE
     }
     if (!g_file_make_directory(target, nullptr, error))
         return FALSE;
-    g_autoptr(GFileEnumerator) children = g_file_enumerate_children(source, "standard::name",
-                                                                    G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, error);
-    if (!children)
+    std::vector<std::string> names;
+    if (!list_children(source, names, error))
         return FALSE;
-    for (;;)
+    for (const auto &name : names)
     {
-        GFileInfo *child_info;
-        GFile *child;
-        if (!g_file_enumerator_iterate(children, &child_info, &child, nullptr, error))
-            return FALSE;
-        if (!child_info)
-            break;
-        g_autoptr(GFile) dest = g_file_get_child(target, g_file_info_get_name(child_info));
+        g_autoptr(GFile) child = g_file_get_child(source, name.c_str());
+        g_autoptr(GFile) dest = g_file_get_child(target, name.c_str());
         if (!copy_tree(child, dest, stage_id, error))
             return FALSE;
     }
@@ -66,17 +79,12 @@ static gboolean remove_tree(GFile *file, GError **error)
     if (g_file_query_file_type(file, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr) == G_FILE_TYPE_DIRECTORY)
     {
         g_chmod(g_file_peek_path(file), 0700);
-        g_autoptr(GFileEnumerator) children = g_file_enumerate_children(file, "standard::name",
-                                                                        G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, error);
-        if (!children)
+        std::vector<std::string> names;
+        if (!list_children(file, names, error))
             return FALSE;
-        for (;;)
+        for (const auto &name : names)
         {
-            GFile *child;
-            if (!g_file_enumerator_iterate(children, nullptr, &child, nullptr, error))
-                return FALSE;
-            if (!child)
-                break;
+            g_autoptr(GFile) child = g_file_get_child(file, name.c_str());
             if (!remove_tree(child, error))
                 return FALSE;
         }

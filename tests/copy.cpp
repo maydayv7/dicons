@@ -1,7 +1,9 @@
 #include "copy.hpp"
 
 #include <glib/gstdio.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <utility>
@@ -93,6 +95,65 @@ static void failed_folder()
     g_assert_true(g_file_delete(pipe, nullptr, nullptr));
 }
 
+static ObjectPtr<GFile> copy_with_fd_limit(const Fixture &fixture, bool keep_both, GError **error)
+{
+    struct rlimit original{};
+    g_assert_cmpint(getrlimit(RLIMIT_NOFILE, &original), ==, 0);
+    auto limited = original;
+    limited.rlim_cur = std::min<rlim_t>(48, original.rlim_cur);
+    g_assert_cmpint(setrlimit(RLIMIT_NOFILE, &limited), ==, 0);
+    auto result = desktop_copy_item(fixture.source.get(), fixture.desktop.get(), fixture.stage.get(), keep_both, error);
+    g_assert_cmpint(setrlimit(RLIMIT_NOFILE, &original), ==, 0);
+    return result;
+}
+
+static void deep_tree()
+{
+    namespace fs = std::filesystem;
+    const Fixture fixture;
+    fs::path branch;
+    for (int level = 0; level < 72; ++level)
+        branch /= "dir";
+    const fs::path source = g_file_peek_path(fixture.source.get());
+    const fs::path desktop = g_file_peek_path(fixture.desktop.get());
+    const auto leaf = source / branch;
+    fs::create_directories(leaf);
+    std::ofstream(leaf / ".payload") << "original";
+    fs::create_symlink(".payload", leaf / "relative");
+    fs::create_symlink("missing", leaf / "dangling");
+    fs::create_directory_symlink(source, leaf / "ancestor");
+    fs::permissions(leaf, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec);
+    struct stat original{};
+    g_assert_cmpint(stat(leaf.c_str(), &original), ==, 0);
+
+    g_autoptr(GError) error = nullptr;
+    auto copy = copy_with_fd_limit(fixture, false, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(copy);
+    const auto copied_leaf = desktop / "Album" / branch;
+    struct stat copied{};
+    g_assert_cmpint(stat(copied_leaf.c_str(), &copied), ==, 0);
+    g_assert_cmpuint(copied.st_mode & 0777, ==, original.st_mode & 0777);
+    g_assert_cmpint(copied.st_mtime, ==, original.st_mtime);
+    std::string contents;
+    std::ifstream(copied_leaf / ".payload") >> contents;
+    g_assert_true(contents == "original");
+    g_assert_true(fs::read_symlink(copied_leaf / "relative") == ".payload");
+    g_assert_true(fs::read_symlink(copied_leaf / "dangling") == "missing");
+    g_assert_true(fs::read_symlink(copied_leaf / "ancestor") == source);
+    g_assert_true(fs::is_empty(g_file_peek_path(fixture.stage.get())));
+
+    g_assert_cmpint(mkfifo((leaf / "pipe").c_str(), 0600), ==, 0);
+    g_assert_null(copy_with_fd_limit(fixture, true, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+    g_assert_true(fs::is_empty(g_file_peek_path(fixture.stage.get())));
+    g_assert_false(fs::exists(desktop / "Album (1)"));
+    g_assert_true(fs::is_fifo(leaf / "pipe"));
+    g_assert_true(fs::read_symlink(leaf / "ancestor") == source);
+    g_assert_true(fs::exists(leaf / ".payload"));
+    g_assert_true(fs::exists(copied_leaf / ".payload"));
+}
+
 static void full_length_names()
 {
     const Fixture f;
@@ -134,6 +195,7 @@ int main(int argc, char **argv)
     g_test_add_func("/copy/collision-filenames", collision_filenames);
     g_test_add_func("/copy/full-length-names", full_length_names);
     g_test_add_func("/copy/failed-folder", failed_folder);
+    g_test_add_func("/copy/deep-tree", deep_tree);
     g_test_add_func("/copy/recursive-drop", recursive_drop);
     return g_test_run();
 }
